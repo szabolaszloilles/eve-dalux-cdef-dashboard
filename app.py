@@ -108,20 +108,97 @@ if fdf.empty:
 weekly = cd.weekly_metrics(fdf)
 last, prev = weekly.iloc[-1], weekly.iloc[-2] if len(weekly) > 1 else weekly.iloc[-1]
 
-# ---------------- header + KPIs ----------------
+# ---------------- header ----------------
 st.title("🏗️ CDEF — Construction Defects Dashboard")
 st.caption(f"EVE Factory Project Debrecen · latest week {last['ISO week']} "
            f"(w/c {last['Week starting']:%d %b %Y}) · {len(fdf)} defects in view")
 
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("Total defects", int(last["Total defects (cumulative)"]),
-          f"{int(last['Total Δ vs prev']):+d} vs prev wk")
-k2.metric("New this week", int(last["New defects"]),
-          f"{int(last['New Δ vs prev']):+d} vs prev wk")
-k3.metric("Accepted this week", int(last["Accepted defects"]),
-          f"{int(last['Accepted Δ vs prev']):+d} vs prev wk")
-open_n = int((~fdf["is_accepted"] & ~fdf["status"].isin(["Discontinued", "Rejected"])).sum())
-k4.metric("Open defects", open_n)
+
+# ---------------- reusable render helpers ----------------
+def render_kpis(_df, _weekly):
+    _last = _weekly.iloc[-1]
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("Total defects", int(_last["Total defects (cumulative)"]),
+              f"{int(_last['Total Δ vs prev']):+d} vs prev wk")
+    k2.metric("New this week", int(_last["New defects"]),
+              f"{int(_last['New Δ vs prev']):+d} vs prev wk")
+    k3.metric("Accepted this week", int(_last["Accepted defects"]),
+              f"{int(_last['Accepted Δ vs prev']):+d} vs prev wk")
+    open_n = int((~_df["is_accepted"] & ~_df["status"].isin(["Discontinued", "Rejected"])).sum())
+    k4.metric("Open defects", open_n)
+
+
+def trend_block(_weekly, title, valcol, dcol, pcol, color, key=""):
+    st.markdown(f"**{title}**")
+    g1, g2 = st.columns([3, 2])
+    with g1:
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+        fig.add_bar(x=_weekly["ISO week"], y=_weekly[valcol], name=valcol,
+                    marker_color=color, opacity=0.85)
+        fig.add_scatter(x=_weekly["ISO week"], y=_weekly[dcol], name="Δ vs prev week",
+                        mode="lines+markers", line=dict(color="#444", width=2),
+                        secondary_y=True)
+        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
+                          legend=dict(orientation="h", y=-0.25), plot_bgcolor="white")
+        fig.update_yaxes(title_text=valcol, secondary_y=False)
+        fig.update_yaxes(title_text="Δ", secondary_y=True, showgrid=False)
+        st.plotly_chart(fig, width="stretch", key=f"chart_{key}_{valcol}")
+    with g2:
+        tbl = _weekly[["ISO week", valcol, dcol, pcol]].tail(10).iloc[::-1].copy()
+
+        def style_delta(v):
+            if pd.isna(v):
+                return ""
+            return f"color: {GREEN}" if v > 0 else (f"color: {RED}" if v < 0 else "")
+        sty = (tbl.style
+               .format({dcol: "{:+.0f}", pcol: "{:+.1f}%", valcol: "{:.0f}"}, na_rep="–")
+               .map(style_delta, subset=[dcol]))
+        st.dataframe(sty, hide_index=True, width="stretch", height=300,
+                     key=f"tbl_{key}_{valcol}")
+
+
+def all_trends(_weekly, key=""):
+    trend_block(_weekly, "New defects per week", "New defects",
+                "New Δ vs prev", "New Δ %", BLUE, key=key)
+    trend_block(_weekly, "Accepted defects per week", "Accepted defects",
+                "Accepted Δ vs prev", "Accepted Δ %", GREEN, key=key)
+    trend_block(_weekly, "Total defects (cumulative) per week",
+                "Total defects (cumulative)", "Total Δ vs prev", "Total Δ %", NAVY, key=key)
+
+
+# ---------------- focus-contractor control ----------------
+focus_contractors = sorted(fdf["contractor"].unique())
+fc1, fc2 = st.columns([3, 2])
+with fc1:
+    focus = st.selectbox("🔍 Focus on a single contractor",
+                         ["All contractors"] + focus_contractors)
+with fc2:
+    show_overall = st.toggle("Also show overall view", value=True,
+                             help="Keep the all-contractors dashboard visible below the focused one.")
+
+st.divider()
+
+# ---------------- focused contractor section ----------------
+if focus != "All contractors":
+    cdf = fdf[fdf["contractor"] == focus].copy()
+    cweekly = cd.weekly_metrics(cdf)
+    st.subheader(f"📌 {focus} — {len(cdf)} defects")
+    render_kpis(cdf, cweekly)
+    st.markdown("")
+    # status breakdown for this contractor
+    sc = cdf["status"].value_counts()
+    chips = "  ·  ".join(f"**{v}** {k}" for k, v in sc.items())
+    st.caption(chips)
+    st.markdown("**Weekly trends — " + focus + "**")
+    all_trends(cweekly, key="focus")
+    st.divider()
+    if not show_overall:
+        st.stop()
+
+# ---------------- overall KPIs ----------------
+if focus != "All contractors":
+    st.subheader("📊 Overall — all contractors in view")
+render_kpis(fdf, weekly)
 
 st.divider()
 
@@ -162,42 +239,9 @@ with cc2:
 
 st.divider()
 
-# ---------------- Weekly trends ----------------
+# ---------------- Weekly trends (overall) ----------------
 st.subheader("Weekly trends — with previous-week comparison")
-
-
-def trend_block(title, valcol, dcol, pcol, color):
-    st.markdown(f"**{title}**")
-    g1, g2 = st.columns([3, 2])
-    with g1:
-        fig = make_subplots(specs=[[{"secondary_y": True}]])
-        fig.add_bar(x=weekly["ISO week"], y=weekly[valcol], name=valcol,
-                    marker_color=color, opacity=0.85)
-        fig.add_scatter(x=weekly["ISO week"], y=weekly[dcol], name="Δ vs prev week",
-                        mode="lines+markers", line=dict(color="#444", width=2),
-                        secondary_y=True)
-        fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
-                          legend=dict(orientation="h", y=-0.25), plot_bgcolor="white")
-        fig.update_yaxes(title_text=valcol, secondary_y=False)
-        fig.update_yaxes(title_text="Δ", secondary_y=True, showgrid=False)
-        st.plotly_chart(fig, width="stretch")
-    with g2:
-        tbl = weekly[["ISO week", valcol, dcol, pcol]].tail(10).iloc[::-1].copy()
-
-        def style_delta(v):
-            if pd.isna(v):
-                return ""
-            return f"color: {GREEN}" if v > 0 else (f"color: {RED}" if v < 0 else "")
-        sty = (tbl.style
-               .format({dcol: "{:+.0f}", pcol: "{:+.1f}%", valcol: "{:.0f}"}, na_rep="–")
-               .map(style_delta, subset=[dcol]))
-        st.dataframe(sty, hide_index=True, width="stretch", height=300)
-
-
-trend_block("New defects per week", "New defects", "New Δ vs prev", "New Δ %", BLUE)
-trend_block("Accepted defects per week", "Accepted defects", "Accepted Δ vs prev", "Accepted Δ %", GREEN)
-trend_block("Total defects (cumulative) per week", "Total defects (cumulative)",
-            "Total Δ vs prev", "Total Δ %", NAVY)
+all_trends(weekly, key="overall")
 
 st.divider()
 
