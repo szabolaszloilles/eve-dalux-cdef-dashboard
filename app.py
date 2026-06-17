@@ -33,16 +33,9 @@ st.markdown("""
 # ---------------- data loading ----------------
 @st.cache_data(show_spinner=False)
 def load(file_bytes=None, filename=None, path=None):
-    import tempfile, os
     if file_bytes is not None:
-        suffix = os.path.splitext(filename or "")[1].lower() or ".xlsx"
-        with tempfile.NamedTemporaryFile("wb", suffix=suffix, delete=False) as f:
-            f.write(file_bytes)
-            tmppath = f.name
-        try:
-            return cd.load_cdef_any(tmppath)
-        finally:
-            os.unlink(tmppath)
+        buffer = io.BytesIO(file_bytes)
+        return cd.load_cdef_any(buffer, filename=filename)
     return cd.load_cdef_any(path)
 
 

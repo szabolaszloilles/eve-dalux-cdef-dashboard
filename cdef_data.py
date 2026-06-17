@@ -24,6 +24,10 @@ def load_cdef(json_path):
     """Return a tidy DataFrame of CDEF records from the Dalux JSON export."""
     with open(json_path, encoding="utf-8") as f:
         data = json.load(f)
+    return _load_cdef_from_dict(data)
+
+
+def _load_cdef_from_dict(data):
     rows = []
     for c in data.get("CDEF", []):
         created = _parse(c.get("xlsCreationDate")) or _parse(c.get("forwardedDate"))
@@ -61,9 +65,14 @@ _XL_COLS = {
 }
 
 
-def _find_header_row(xls_path, sheet, scan=15):
-    """Locate the row index whose cells contain the known Dalux headers."""
-    probe = pd.read_excel(xls_path, sheet_name=sheet, header=None, nrows=scan)
+def _find_header_row(src, sheet, scan=15):
+    """Locate the row index whose cells contain the known Dalux headers.
+
+    `src` may be a path or a seekable file-like buffer (BytesIO).
+    """
+    if hasattr(src, "seek"):
+        src.seek(0)
+    probe = pd.read_excel(src, sheet_name=sheet, header=None, nrows=scan)
     targets = {"No.", "Type", "Subject", "Date created", "Work package", "Status"}
     for i in range(len(probe)):
         rowvals = {str(v).strip() for v in probe.iloc[i].tolist()}
@@ -90,20 +99,28 @@ def _to_dt(v):
         return None
 
 
-def load_cdef_excel(xls_path, sheet=0):
+def load_cdef_excel(src, sheet=0):
     """Return a tidy DataFrame of CDEF records from the raw Dalux Excel export.
 
-    Auto-detects the header row, filters to Construction Defect rows (if a Type
-    column is present), and maps Dalux columns to the same schema as load_cdef.
+    `src` may be a file path or a seekable file-like buffer (BytesIO). Auto-detects
+    the header row, filters to Construction Defect rows (if a Type column is
+    present), and maps Dalux columns to the same schema as load_cdef.
     """
+    def _seek():
+        if hasattr(src, "seek"):
+            src.seek(0)
+
     # Resolve sheet: prefer one literally named 'Data' if present.
-    xl = pd.ExcelFile(xls_path)
+    _seek()
+    xl = pd.ExcelFile(src)
     if isinstance(sheet, int):
         sheet = "Data" if "Data" in xl.sheet_names else xl.sheet_names[0]
-    hdr = _find_header_row(xls_path, sheet)
-    raw = pd.read_excel(xls_path, sheet_name=sheet, header=hdr, dtype=str)
+    hdr = _find_header_row(src, sheet)
+    _seek()
+    raw = pd.read_excel(src, sheet_name=sheet, header=hdr, dtype=str)
     # Re-read dates without forcing str for the date columns
-    dates = pd.read_excel(xls_path, sheet_name=sheet, header=hdr,
+    _seek()
+    dates = pd.read_excel(src, sheet_name=sheet, header=hdr,
                           usecols=lambda c: c in (_XL_COLS["created"], _XL_COLS["modified"]))
 
     present = set(raw.columns)
@@ -143,14 +160,26 @@ def load_cdef_excel(xls_path, sheet=0):
     return _finalize(out.reset_index(drop=True))
 
 
-def load_cdef_any(path):
-    """Dispatch on file extension: .json -> JSON loader, .xlsx/.xls -> Excel loader."""
-    p = str(path).lower()
-    if p.endswith(".json"):
-        return load_cdef(path)
-    if p.endswith((".xlsx", ".xls", ".xlsm")):
-        return load_cdef_excel(path)
-    raise ValueError(f"Unsupported file type: {path}")
+def load_cdef_any(path_or_buffer, filename=None):
+    """Dispatch by file type.
+
+    `path_or_buffer` may be a path string or a file-like buffer. When a buffer is
+    passed, supply `filename` so the extension can be detected.
+    """
+    name = (filename or (path_or_buffer if isinstance(path_or_buffer, str) else "")).lower()
+    if name.endswith(".json"):
+        if isinstance(path_or_buffer, str):
+            return load_cdef(path_or_buffer)
+        import json
+        path_or_buffer.seek(0)
+        data = json.load(path_or_buffer)
+        return _load_cdef_from_dict(data)
+    if name.endswith((".xlsx", ".xls", ".xlsm")):
+        return load_cdef_excel(path_or_buffer)
+    # Fall back: assume Excel for buffers without a clear extension
+    if not isinstance(path_or_buffer, str):
+        return load_cdef_excel(path_or_buffer)
+    raise ValueError(f"Unsupported file type: {path_or_buffer}")
 
 
 def _finalize(df):
