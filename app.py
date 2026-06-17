@@ -133,10 +133,16 @@ with cc1:
 with cc2:
     disp = csum.rename(columns={"contractor": "Contractor"})
     st.dataframe(
-        disp.style.format({"Acceptance %": "{:.1f}%"})
-        .background_gradient(subset=["Total"], cmap="Blues"),
+        disp,
         hide_index=True, width="stretch",
-        height=max(300, 40 * len(disp)))
+        height=max(300, 40 * len(disp)),
+        column_config={
+            "Total": st.column_config.ProgressColumn(
+                "Total", format="%d",
+                min_value=0, max_value=int(disp["Total"].max())),
+            "Acceptance %": st.column_config.NumberColumn(
+                "Acceptance %", format="%.1f%%"),
+        })
 
 st.divider()
 
