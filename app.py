@@ -68,25 +68,41 @@ else:
 
 # ---------------- filters ----------------
 st.sidebar.markdown("### Filters")
+st.sidebar.caption("All items start selected. Remove tags (×) to narrow the view.")
+
 contractors = sorted(df["contractor"].unique())
-sel_contr = st.sidebar.multiselect("Contractor (Work Package)", contractors, default=contractors)
+sel_contr = st.sidebar.multiselect(
+    "Contractor (Work Package)", contractors, default=contractors)
+
 disciplines = sorted(d for d in df["discipline"].unique() if d)
-sel_disc = st.sidebar.multiselect("Discipline", disciplines, default=disciplines)
+has_blank_disc = (df["discipline"] == "").any()
+disc_options = disciplines + (["(none)"] if has_blank_disc else [])
+sel_disc = st.sidebar.multiselect(
+    "Discipline", disc_options, default=disc_options)
 
 valid_dates = df["created"].dropna()
 dmin, dmax = valid_dates.min().date(), valid_dates.max().date()
-date_range = st.sidebar.date_input("Created between", (dmin, dmax), min_value=dmin, max_value=dmax)
+date_range = st.sidebar.date_input("Created between", (dmin, dmax),
+                                   min_value=dmin, max_value=dmax)
 if isinstance(date_range, tuple) and len(date_range) == 2:
     d0, d1 = date_range
 else:
     d0, d1 = dmin, dmax
 
-mask = df["contractor"].isin(sel_contr) & (df["discipline"].isin(sel_disc) | (df["discipline"] == ""))
+# Map the "(none)" pseudo-option back to blank disciplines
+disc_real = [d for d in sel_disc if d != "(none)"]
+disc_mask = df["discipline"].isin(disc_real)
+if "(none)" in sel_disc:
+    disc_mask = disc_mask | (df["discipline"] == "")
+
+mask = df["contractor"].isin(sel_contr) & disc_mask
 mask &= df["created"].dt.date.between(d0, d1)
 fdf = df[mask].copy()
 
+st.sidebar.markdown(f"**{len(fdf)}** of {len(df)} defects shown")
+
 if fdf.empty:
-    st.warning("No defects match the current filters.")
+    st.warning("No defects match the current filters. Add some tags back, or widen the date range.")
     st.stop()
 
 weekly = cd.weekly_metrics(fdf)
