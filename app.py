@@ -248,10 +248,29 @@ all_trends(weekly, key="overall")
 
 st.divider()
 
-# ---------------- Export note ----------------
+# ---------------- Export ----------------
 st.subheader("Export")
-st.caption("A pre-built multi-sheet Excel report (`CDEF_Report.xlsx`) is delivered alongside this app. "
-           "To regenerate it for a new JSON export, run:  `python build_excel.py <export>.json CDEF_Report.xlsx`")
+st.caption("Download the full multi-sheet Excel report (Summary, By Contractor, "
+           "Weekly New/Accepted/Total, Raw CDEF) for **all loaded data** — "
+           "the sidebar filters and contractor focus do not affect this report.")
+
+import build_excel as be
+
+
+@st.cache_data(show_spinner="Building Excel report…")
+def _report_bytes(token):
+    return be.build_report_bytes(df)
+
+# Cache key tied to the dataset size + latest week so it rebuilds when data changes
+_token = f"{len(df)}-{weekly.iloc[-1]['ISO week']}"
+report_bytes = _report_bytes(_token)
+
+st.download_button(
+    "⬇️ Download Excel report",
+    data=report_bytes,
+    file_name=f"CDEF_Report_{dt.date.today():%Y%m%d}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+)
 
 with st.expander("Definitions & method"):
     st.markdown("""
