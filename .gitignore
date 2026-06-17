@@ -1,0 +1,20 @@
+# Project data — never commit real Dalux exports or reports
+*.json
+*.xlsx
+!example_data_redacted.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Streamlit
+.streamlit/secrets.toml
