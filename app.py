@@ -117,15 +117,20 @@ st.caption(f"EVE Factory Project Debrecen · latest week {last['ISO week']} "
 # ---------------- reusable render helpers ----------------
 def render_kpis(_df, _weekly):
     _last = _weekly.iloc[-1]
+    wk = _last["ISO week"]
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total defects", int(_last["Total defects (cumulative)"]),
-              f"{int(_last['Total Δ vs prev']):+d} vs prev wk")
-    k2.metric("New this week", int(_last["New defects"]),
-              f"{int(_last['New Δ vs prev']):+d} vs prev wk")
-    k3.metric("Accepted this week", int(_last["Accepted defects"]),
-              f"{int(_last['Accepted Δ vs prev']):+d} vs prev wk")
+    k1.metric("Total defects (to date)", int(_last["Total defects (cumulative)"]),
+              f"{int(_last['Total Δ vs prev']):+d} added in {wk}",
+              help="Cumulative count of all defects raised so far. The delta is how many were added during the latest week.")
+    k2.metric(f"New defects in {wk}", int(_last["New defects"]),
+              f"{int(_last['New Δ vs prev']):+d} vs week before",
+              help=f"Defects raised during {wk}. The delta compares this week's count of new defects to the previous week's count of new defects.")
+    k3.metric(f"Accepted in {wk}", int(_last["Accepted defects"]),
+              f"{int(_last['Accepted Δ vs prev']):+d} vs week before",
+              help=f"Defects approved/closed during {wk}. The delta compares this week's count to the previous week's.")
     open_n = int((~_df["is_accepted"] & ~_df["status"].isin(["Discontinued", "Rejected"])).sum())
-    k4.metric("Open defects", open_n)
+    k4.metric("Open defects (now)", open_n,
+              help="Defects not yet approved, discontinued, or rejected — i.e. currently outstanding.")
 
 
 def trend_block(_weekly, title, valcol, dcol, pcol, color, key=""):
