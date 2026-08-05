@@ -1,4 +1,9 @@
-streamlit>=1.40
+# Pinned to a known-good combination.
+# Streamlit 1.61 + Starlette 1.4 crash on startup with:
+#   TypeError: GZipResponder.__init__() missing 'thread_minimum_size'
+# so streamlit is pinned below that until upstream fixes it.
+streamlit==1.58.0
+starlette==1.3.1
 pandas>=2.0
 plotly>=5.20
 openpyxl>=3.1
