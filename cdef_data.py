@@ -655,7 +655,7 @@ def contractor_type_summary(df):
               Resolved=("is_accepted", "sum"),
               Open=("_open", "sum"))
          .reset_index())
-    g["Resolved %"] = (g["Resolved"] / g["Total"] * 100).round(1)
+    g["Resolved %"] = (g["Resolved"] / g["Total"] * 100).round(2)
     g = g.sort_values(["contractor", "Total"], ascending=[True, False])
     return g.rename(columns={"contractor": "Contractor",
                              "defectType": "Defect type"}).reset_index(drop=True)
@@ -667,5 +667,5 @@ def contractor_summary(df):
         Accepted=("is_accepted", "sum"),
     )
     g["Open"] = g["Total"] - g["Accepted"]
-    g["Acceptance %"] = (g["Accepted"] / g["Total"] * 100).round(1)
+    g["Acceptance %"] = (g["Accepted"] / g["Total"] * 100).round(2)
     return g.sort_values("Total", ascending=False).reset_index()

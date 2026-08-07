@@ -256,12 +256,12 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
             rates = cd.week_resolution_rates(_df)
             cols[5].metric(
                 f"Resolved of {wk} intake",
-                f"{rates['pct_todate']:.0f}%",
-                f"{rates['pct_inweek']:.0f}% within the week", delta_color="off",
+                f"{rates['pct_todate']:.2f}%",
+                f"{rates['pct_inweek']:.2f}% within the week", delta_color="off",
                 help=(f"Of the {rates['new']} defects raised in {wk}, "
-                      f"{rates['resolved_todate']} are now approved ({rates['pct_todate']:.1f}%). "
+                      f"{rates['resolved_todate']} are now approved ({rates['pct_todate']:.2f}%). "
                       f"{rates['resolved_inweek']} were approved within that same week "
-                      f"({rates['pct_inweek']:.1f}%). 'Resolved' = status Approved or Approved, follow-up."))
+                      f"({rates['pct_inweek']:.2f}%). 'Resolved' = status Approved or Approved, follow-up."))
 
 
     def trend_block(_weekly, title, valcol, dcol, pcol, color, key="", good="down"):
@@ -295,7 +295,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                 improving = (v < 0) if good == "down" else (v > 0)
                 return f"color: {GREEN}" if improving else f"color: {RED}"
             sty = (tbl.style
-                   .format({dcol: "{:+.0f}", pcol: "{:+.1f}%", valcol: "{:.0f}"}, na_rep="–")
+                   .format({dcol: "{:+.0f}", pcol: "{:+.2f}%", valcol: "{:.0f}"}, na_rep="–")
                    .map(style_delta, subset=[dcol]))
             st.dataframe(sty, hide_index=True, width="stretch", height=300,
                          key=f"{_kp}_tbl_{key}_{valcol}")
@@ -382,7 +382,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                                         height:100%;border-radius:999px;"></div>
                           </div>
                           <div style="font-size:0.95rem;color:{MUTED};">
-                            <b style="color:{INK};">{_pct:.0f}%</b> resolved ·
+                            <b style="color:{INK};">{_pct:.2f}%</b> resolved ·
                             <b style="color:{INK};">{int(_r['open'])}</b> open
                           </div>
                         </div>
@@ -441,13 +441,13 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
               <div style="display:flex;align-items:baseline;gap:22px;margin-top:10px;
                           flex-wrap:wrap;">
                 <div style="font-size:3.6rem;font-weight:800;color:{_bar_col};
-                            line-height:1;">{_tot_pct:.0f}%</div>
+                            line-height:1;">{_tot_pct:.2f}%</div>
                 <div style="font-size:1.25rem;color:{INK};line-height:1.5;">
                   <b style="font-size:1.5rem;">{_rates['resolved_todate']}</b>
                   of <b style="font-size:1.5rem;">{_rates['new']}</b> defects raised
                   this week are resolved<br>
                   <span style="color:{MUTED};font-size:1.05rem;">
-                    {_rates['pct_inweek']:.0f}% were closed within the week itself</span>
+                    {_rates['pct_inweek']:.2f}% were closed within the week itself</span>
                 </div>
               </div>
             </div>
@@ -473,11 +473,11 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                         <div style="font-size:1.1rem;font-weight:700;color:{INK};
                                     line-height:1.3;min-height:2.6em;">{_t['type']}</div>
                         <div style="font-size:0.92rem;color:{MUTED};margin-top:2px;">
-                          {_share:.0f}% of week intake</div>
+                          {_share:.1f}% of week intake</div>
                       </div>
                       <div style="padding:18px;">
                         <div style="font-size:3rem;font-weight:800;color:{_c};
-                                    line-height:1;">{_p:.0f}%</div>
+                                    line-height:1;">{_p:.2f}%</div>
                         <div style="font-size:0.95rem;color:{MUTED};margin-top:4px;">
                           resolved to date</div>
                         <div style="background:#EEF1F5;border-radius:999px;height:12px;
@@ -492,7 +492,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                         </div>
                         <div style="font-size:0.95rem;color:{MUTED};margin-top:6px;
                                     padding-top:10px;border-top:1px solid {LINE};">
-                          {_t['pct_inweek']:.0f}% closed within the week
+                          {_t['pct_inweek']:.2f}% closed within the week
                         </div>
                       </div>
                     </div>
@@ -554,7 +554,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                           <span style="font-size:1rem;font-weight:600;color:{INK};">
                             <span style="color:{_tc};">■</span> {_t['type']}</span>
                           <span style="font-size:1.15rem;font-weight:700;color:{_tc};">
-                            {_tp:.0f}%</span>
+                            {_tp:.2f}%</span>
                         </div>
                         <div style="background:#EEF1F5;border-radius:999px;height:11px;
                                     overflow:hidden;">
@@ -585,7 +585,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                             <div style="text-align:right;">
                               <div style="font-size:2.2rem;font-weight:800;
                                           color:{_hdr_col};line-height:1;">
-                                {_cp:.0f}%</div>
+                                {_cp:.2f}%</div>
                               <div style="font-size:0.85rem;color:{MUTED};">resolved</div>
                             </div>
                           </div>
@@ -605,8 +605,8 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                     "Raised": st.column_config.NumberColumn("Raised", format="%d"),
                     "Resolved": st.column_config.NumberColumn("Resolved", format="%d"),
                     "Resolved %": st.column_config.ProgressColumn(
-                        "Resolved %", format="%.0f%%", min_value=0, max_value=100),
-                    "In-week %": st.column_config.NumberColumn("In-week %", format="%.0f%%"),
+                        "Resolved %", format="%.2f%%", min_value=0, max_value=100),
+                    "In-week %": st.column_config.NumberColumn("In-week %", format="%.2f%%"),
                 })
 
         st.markdown(
@@ -667,9 +667,9 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                 continue
             figp.add_bar(
                 x=_pf["Contractor"], y=_vals, name=_cn, marker_color=_col,
-                text=[("" if pd.isna(v) else f"{v:.0f}%") for v in _vals],
+                text=[("" if pd.isna(v) else f"{v:.2f}%") for v in _vals],
                 textposition="outside", cliponaxis=False,
-                hovertemplate="<b>%{x}</b><br>" + _cn + ": %{y:.0f}%<extra></extra>")
+                hovertemplate="<b>%{x}</b><br>" + _cn + ": %{y:.2f}%<extra></extra>")
         figp.update_layout(
             barmode="group", bargap=0.25, bargroupgap=0.06,
             height=460, margin=dict(l=10, r=10, t=30, b=10),
@@ -684,7 +684,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
         _disp = _pf[["Contractor", "Top 10 reply %", _wk_col, "Overall closing %"]]
         st.dataframe(
             _disp, hide_index=True, width="stretch",
-            column_config={c: st.column_config.NumberColumn(c, format="%.0f%%")
+            column_config={c: st.column_config.NumberColumn(c, format="%.2f%%")
                            for c in _disp.columns if c != "Contractor"})
 
         if _t10 is None:

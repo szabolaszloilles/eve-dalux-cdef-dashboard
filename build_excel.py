@@ -54,7 +54,7 @@ def write_table(ws, df_, start_row=1, pct_cols=(), delta_cols=(), int_cols=(),
             val = row[name]
             numfmt = None
             if name in pct_cols:
-                numfmt = '0.0"%";(0.0)"%";"–"'
+                numfmt = '0.00"%";(0.00)"%";"–"'
             elif name in delta_cols:
                 numfmt = '+#,##0;-#,##0;"–"'
             elif name in int_cols:
@@ -123,7 +123,7 @@ def _add_sheets(wb, df, top10=None, prefix="", title="CDEF — Construction Defe
         ("Accepted (latest week)", int(last["Accepted defects"]), int(last["Accepted Δ vs prev"])),
         ("Open defects", int((~df["is_accepted"]).sum() - df[df['status'].isin(['Discontinued', 'Rejected'])].shape[0]), None),
         ("Reported ready · CÉH", cd.reported_ready_ceh(df), None),
-        ("Resolved of week intake", f"{rates['pct_todate']:.0f}%", None),
+        ("Resolved of week intake", f"{rates['pct_todate']:.2f}%", None),
     ]
     r = 4
     ws[f"A{r}"] = f"Latest reporting week (Fri–Thu): {last['ISO week']}  (ending {last['Week starting'] + dt.timedelta(days=6):%d %b %Y})"
@@ -139,7 +139,7 @@ def _add_sheets(wb, df, top10=None, prefix="", title="CDEF — Construction Defe
         v.font = Font(name=FONT, bold=True, size=18, color=NAVY)
         d = ws.cell(row=r + 2, column=col)
         if label.startswith("Resolved"):
-            cellfmt(d, f"{rates['pct_inweek']:.0f}% within the week")
+            cellfmt(d, f"{rates['pct_inweek']:.2f}% within the week")
             d.font = Font(name=FONT, bold=True, color="595959")
         elif delta is None:
             cellfmt(d, "")
@@ -279,9 +279,9 @@ def _add_sheets(wb, df, top10=None, prefix="", title="CDEF — Construction Defe
             continue
         perf.append({
             "Contractor": c,
-            "Top 10 reply %": (round(float(t10row["reply_pct"]), 1)
+            "Top 10 reply %": (round(float(t10row["reply_pct"]), 2)
                                if t10row is not None else None),
-            "Week closing %": (round(wk_map[c]["pct_todate"], 1)
+            "Week closing %": (round(wk_map[c]["pct_todate"], 2)
                                if c in wk_map else None),
             "Overall closing %": float(row["Acceptance %"]),
         })
