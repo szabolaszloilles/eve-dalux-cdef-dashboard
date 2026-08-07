@@ -91,20 +91,25 @@ def color_deltas(ws, df_, start_row, delta_cols):
         ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0"], font=Font(color=RED_T)))
 
 
-def build_workbook(df, top10=None):
-    """Build and return an openpyxl Workbook for the given CDEF DataFrame."""
+def _add_sheets(wb, df, top10=None, prefix="", title="CDEF — Construction Defects Dashboard"):
+    """Add a full set of report sheets for `df` to an existing workbook.
+
+    `prefix` is prepended to every sheet name so a second dataset (e.g. CDEF-SG)
+    can be appended to the same workbook without clashing.
+    """
     weekly = cd.rolling_metrics(df)
     matrix = cd.contractor_status_matrix(df)
     csum = cd.contractor_summary(df)
 
-    wb = Workbook()
-
     # ---------------- Summary ----------------
-    ws = wb.active
-    ws.title = "Summary"
+    if prefix:
+        ws = wb.create_sheet(f"{prefix}Summary")
+    else:
+        ws = wb.active
+        ws.title = "Summary"
     ws.sheet_view.showGridLines = False
     ws.merge_cells("A1:F1")
-    hdr(ws["A1"], "CDEF — Construction Defects Dashboard", bg=NAVY, size=16, align="left")
+    hdr(ws["A1"], title, bg=NAVY, size=16, align="left")
     ws.row_dimensions[1].height = 28
     ws["A2"] = f"EVE Factory Project Debrecen   ·   Generated {dt.date.today():%d %b %Y}"
     ws["A2"].font = Font(name=FONT, italic=True, color="595959")
@@ -167,7 +172,7 @@ def build_workbook(df, top10=None):
         ws.merge_cells(start_row=note_r + i, start_column=1, end_row=note_r + i, end_column=6)
 
     # ---------------- By Contractor ----------------
-    ws = wb.create_sheet("By Contractor")
+    ws = wb.create_sheet(f"{prefix}By Contractor")
     ws.merge_cells("A1:F1")
     hdr(ws["A1"], "Defects by Contractor (Work Package) × Status", bg=NAVY, size=13, align="left")
     ws.row_dimensions[1].height = 24
@@ -195,10 +200,10 @@ def build_workbook(df, top10=None):
         ("7-Day Accepted", ["Week starting", "ISO week", "Accepted defects", "Accepted Δ vs prev", "Accepted Δ %"], "Accepted defects", "Accepted Δ vs prev", "Accepted Δ %"),
         ("7-Day Total", ["Week starting", "ISO week", "Total defects (cumulative)", "Total Δ vs prev", "Total Δ %"], "Total defects (cumulative)", "Total Δ vs prev", "Total Δ %"),
     ]
-    for title, cols, valcol, dcol, pcol in specs:
-        ws = wb.create_sheet(title)
+    for sheet_title, cols, valcol, dcol, pcol in specs:
+        ws = wb.create_sheet(f"{prefix}{sheet_title}")
         ws.merge_cells("A1:E1")
-        hdr(ws["A1"], title.replace("7-Day", "7-Day rolling —"), bg=NAVY, size=13, align="left")
+        hdr(ws["A1"], sheet_title.replace("7-Day", "7-Day rolling —"), bg=NAVY, size=13, align="left")
         ws.row_dimensions[1].height = 24
         sub = weekly[cols].copy()
         sub = sub.rename(columns={"Week starting": "Period start", "ISO week": "7-day period"})
@@ -209,7 +214,7 @@ def build_workbook(df, top10=None):
     # ---------------- Raw CDEF ----------------
     # ---------------- Resolution by defect type ----------------
     if rates["by_type"]:
-        ws = wb.create_sheet("By Defect Type")
+        ws = wb.create_sheet(f"{prefix}By Defect Type")
         ws.merge_cells("A1:F1")
         hdr(ws["A1"], f"Resolution by defect type — {rates['label']} intake",
             bg=NAVY, size=13, align="left")
@@ -228,7 +233,7 @@ def build_workbook(df, top10=None):
 
     # ---------------- Resolution by contractor (x defect type) ----------------
     if rates.get("by_contractor"):
-        ws = wb.create_sheet("Weekly by Contractor")
+        ws = wb.create_sheet(f"{prefix}Weekly by Contractor")
         ws.merge_cells("A1:F1")
         hdr(ws["A1"], f"Resolution by contractor — {rates['label']} intake",
             bg=NAVY, size=13, align="left")
@@ -281,7 +286,7 @@ def build_workbook(df, top10=None):
             "Overall closing %": float(row["Acceptance %"]),
         })
     if perf:
-        ws = wb.create_sheet("Contractor Performance")
+        ws = wb.create_sheet(f"{prefix}Contractor Performance")
         ws.merge_cells("A1:E1")
         hdr(ws["A1"], f"Contractor performance — {rates['label']}", bg=NAVY,
             size=13, align="left")
@@ -294,7 +299,7 @@ def build_workbook(df, top10=None):
         write_table(ws, pd.DataFrame(perf), start_row=4,
                     pct_cols=["Top 10 reply %", "Week closing %", "Overall closing %"])
 
-    ws = wb.create_sheet("Raw CDEF")
+    ws = wb.create_sheet(f"{prefix}Raw CDEF")
     raw = df[["id", "subject", "contractor", "defectType", "status", "statusDetailed",
               "discipline", "role", "responsibleCompany", "created", "modified",
               "is_accepted"]].copy()
@@ -310,9 +315,33 @@ def build_workbook(df, top10=None):
     return wb
 
 
-def build_report_bytes(df, top10=None):
+def build_workbook(df, top10=None, df_sg=None):
+    """Build the report workbook.
+
+    `df`     - regular CDEF defects (may be None if only SG data is supplied)
+    `df_sg`  - optional CDEF-SG defects; their sheets are appended to the same
+               workbook with an 'SG ' prefix.
+    """
+    wb = Workbook()
+    first_done = False
+    if df is not None and not df.empty:
+        _add_sheets(wb, df, top10=top10, prefix="",
+                    title="CDEF — Construction Defects Dashboard")
+        first_done = True
+    if df_sg is not None and not df_sg.empty:
+        if not first_done:
+            # SG only: use the default sheet for its Summary
+            _add_sheets(wb, df_sg, top10=top10, prefix="",
+                        title="CDEF-SG — Construction Defects Dashboard")
+        else:
+            _add_sheets(wb, df_sg, top10=top10, prefix="SG ",
+                        title="CDEF-SG — Construction Defects Dashboard")
+    return wb
+
+
+def build_report_bytes(df, top10=None, df_sg=None):
     """Return the report workbook as .xlsx bytes (for in-app download)."""
-    wb = build_workbook(df, top10=top10)
+    wb = build_workbook(df, top10=top10, df_sg=df_sg)
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)

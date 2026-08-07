@@ -227,7 +227,11 @@ def load_cdef_excel(src, sheet=0):
 
     # Filter to CDEF if a Type column exists
     if resolved["type"]:
-        keep = raw[resolved["type"]].astype(str).str.strip() == "Construction Defect"
+        # Accept every Construction Defect variant, e.g. plain "Construction
+        # Defect" and sub-types such as "Construction Defect - SG". Anything
+        # else in a mixed export (MAF, RFI, MS/QCP, HDEF...) is filtered out.
+        _t = raw[resolved["type"]].astype(str).str.strip()
+        keep = _t.str.lower().str.startswith("construction defect")
         raw = raw[keep].copy()
         dates = dates.loc[raw.index]
 
@@ -248,6 +252,7 @@ def load_cdef_excel(src, sheet=0):
         "discipline": col("discipline").apply(_clean_discipline),
         "role": col("role").fillna("").astype(str),
         "responsibleCompany": col("responsibleCompany").fillna("").astype(str),
+        "daluxType": col("type").fillna("").astype(str).str.strip(),
         "defectType": col("defectType").apply(_clean_defect_type),
         "created": list(created) if created is not None else None,
         "modified": list(modified) if modified is not None else None,
@@ -396,6 +401,10 @@ def _finalize(df):
     df["modified_week"] = df["modified"].apply(
         lambda d: _week_start(d.date()) if pd.notna(d) else None)
     df["responsibility"] = df["role"].apply(_responsibility)
+    if "daluxType" not in df.columns:
+        df["daluxType"] = ""
+    df["daluxType"] = df["daluxType"].fillna("").astype(str).str.strip()
+    df["is_sg"] = df["daluxType"].str.lower().str.contains(r"\bsg\b", regex=True)
     if "defectType" not in df.columns:
         df["defectType"] = NOT_SPECIFIED
     df["defectType"] = df["defectType"].fillna(NOT_SPECIFIED).replace("", NOT_SPECIFIED)
