@@ -1,20 +1,48 @@
-# Project data — never commit real Dalux exports or reports
-*.json
-*.xlsx
-!example_data_redacted.json
+# ---- Secrets: NEVER commit ----------------------------------------
+*credentials*
+*secret*
+.env
+secrets/
+dalux_config.local.ini
 
-# Python
+# ---- Project data: real defects, contractor details ---------------
+*.xlsx
+*.xlsm
+*.xls
+*.json
+Reports*.xlsx
+SAMPLE_*
+files/
+output/
+exports/
+
+# ---- Generated reports / working output ---------------------------
+CDEF_Report*.xlsx
+run.log
+manifest.csv
+
+# ---- Python -------------------------------------------------------
 __pycache__/
 *.pyc
 .venv/
 venv/
 env/
 
-# OS / editor
+# ---- OS / editor --------------------------------------------------
 .DS_Store
 Thumbs.db
 .vscode/
 .idea/
 
-# Streamlit
+# ---- Streamlit ----------------------------------------------------
 .streamlit/secrets.toml
+
+# ---- Files that MUST be tracked (exceptions to the rules above) ----
+!contractors.csv
+!defect_type_overrides.csv
+!requirements.txt
+!requirements-server.txt
+!dalux_config.ini
+
+# Debug screenshots from the scraper
+dalux_failure_*.png
