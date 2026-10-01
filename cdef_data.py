@@ -65,6 +65,12 @@ _XL_COLS = {
     "statusDetailed": ["Status detailed"],
     "responsibleCompany": ["Responsible (company)", "Responsible"],
     "defectType": ["Defect Type / Hiba típusa", "Defect Type", "Hiba típusa"],
+    # Days from creation to approval; only filled for status "Approved".
+    # Used by the deadline follow-up to date each approval exactly.
+    "resolutionTime": ["Resolution time"],
+    # "Name, Company" of whoever last changed the CDEF. For a Reported-ready
+    # item last changed by the contractor, Date modified = the report-ready date.
+    "modifiedBy": ["Modified by"],
 }
 
 # Only these must be present for the dashboard to work. Others degrade gracefully.
@@ -254,6 +260,8 @@ def load_cdef_excel(src, sheet=0):
         "responsibleCompany": col("responsibleCompany").fillna("").astype(str),
         "daluxType": col("type").fillna("").astype(str).str.strip(),
         "defectType": col("defectType").apply(_clean_defect_type),
+        "resolution_days": pd.to_numeric(col("resolutionTime"), errors="coerce"),
+        "modified_by": col("modifiedBy").fillna("").astype(str).str.strip(),
         "created": list(created) if created is not None else None,
         "modified": list(modified) if modified is not None else None,
     })
@@ -408,6 +416,10 @@ def _finalize(df):
     if "defectType" not in df.columns:
         df["defectType"] = NOT_SPECIFIED
     df["defectType"] = df["defectType"].fillna(NOT_SPECIFIED).replace("", NOT_SPECIFIED)
+    if "resolution_days" not in df.columns:
+        df["resolution_days"] = float("nan")
+    if "modified_by" not in df.columns:
+        df["modified_by"] = ""
     df = apply_type_overrides(df)
     return df
 
@@ -479,6 +491,24 @@ def _last_complete_weekend_day(today=None):
 _last_complete_friday = _last_complete_weekend_day
 
 
+def _last_complete_day(today=None):
+    """Return yesterday — the most recent day that has fully finished."""
+    if today is None:
+        today = dt.date.today()
+    return today - dt.timedelta(days=1)
+
+
+def default_period_end(period_days=7, today=None):
+    """Pick the right anchor for a reporting period.
+
+    period_days == 1  -> yesterday (the last complete day)
+    otherwise         -> the last complete Fri–Thu reporting week
+    """
+    if period_days == 1:
+        return _last_complete_day(today)
+    return _last_complete_weekend_day(today)
+
+
 def week_resolution_rates(df, end_date=None, period_days=7):
     """Resolution rates for the cohort of defects CREATED in the reporting week.
 
@@ -491,7 +521,7 @@ def week_resolution_rates(df, end_date=None, period_days=7):
       label         - the week label, e.g. '27 Jun-03 Jul'
     """
     if end_date is None:
-        end_date = _last_complete_friday()
+        end_date = default_period_end(period_days)
     start = end_date - dt.timedelta(days=period_days - 1)
 
     created = df["created"]
@@ -567,6 +597,33 @@ def week_resolution_rates(df, end_date=None, period_days=7):
     }
 
 
+_METRIC_COLUMNS = [
+    "Week starting", "ISO week", "New defects", "New Δ vs prev", "New Δ %",
+    "Accepted defects", "Accepted Δ vs prev", "Accepted Δ %",
+    "Total defects (cumulative)", "Total Δ vs prev", "Total Δ %"]
+
+
+def safe_int(value, default=0):
+    """int() that tolerates NaN/None.
+
+    The delta columns are produced with .diff(), so the FIRST period has no
+    predecessor and its delta is NaN. A contractor whose defects all fall in
+    one reporting period therefore has NaN in the only row there is — and
+    int(NaN) raises ValueError. Treat "no previous period" as a zero change.
+    """
+    try:
+        if value is None or pd.isna(value):
+            return default
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _empty_metrics():
+    """A correctly-shaped but empty metrics frame."""
+    return pd.DataFrame(columns=_METRIC_COLUMNS)
+
+
 def rolling_metrics(df, end_date=None, period_days=7):
     """New / Accepted / Total over consecutive `period_days`-day windows.
 
@@ -579,14 +636,11 @@ def rolling_metrics(df, end_date=None, period_days=7):
     and a human label like '28 Jun–04 Jul'.
     """
     if end_date is None:
-        end_date = _last_complete_friday()
+        end_date = default_period_end(period_days)
 
     created = df["created"].dropna()
     if created.empty:
-        return pd.DataFrame(columns=[
-            "Week starting", "ISO week", "New defects", "New Δ vs prev", "New Δ %",
-            "Accepted defects", "Accepted Δ vs prev", "Accepted Δ %",
-            "Total defects (cumulative)", "Total Δ vs prev", "Total Δ %"])
+        return _empty_metrics()
 
     earliest = created.min().date()
     # Build period end-dates stepping back from end_date until we cover earliest.
@@ -596,6 +650,13 @@ def rolling_metrics(df, end_date=None, period_days=7):
         period_ends.append(cur)
         cur = cur - dt.timedelta(days=period_days)
     period_ends = period_ends[::-1]  # chronological
+
+    # A contractor whose FIRST defect was created after the last complete
+    # period ended (e.g. newly mobilised this week) produces no periods at all.
+    # Return the same well-formed empty frame rather than letting the caller
+    # hit a KeyError on a column-less DataFrame.
+    if not period_ends:
+        return _empty_metrics()
 
     created_dates = df["created"].dropna().dt.date
     acc_mask = df["is_accepted"]
@@ -628,7 +689,9 @@ def rolling_metrics(df, end_date=None, period_days=7):
 
 
 def _period_label(start, end):
-    """'17–23 Jun' or '29 Jun–05 Jul' (include month on both sides if they differ)."""
+    """'17–23 Jun', '29 Jun–05 Jul', or just '06 Aug' for a single day."""
+    if start == end:
+        return f"{start:%d %b}"
     if start.month == end.month:
         return f"{start.day}–{end.day} {end:%b}"
     return f"{start:%d %b}–{end:%d %b}"
@@ -669,3 +732,247 @@ def contractor_summary(df):
     g["Open"] = g["Total"] - g["Accepted"]
     g["Acceptance %"] = (g["Accepted"] / g["Total"] * 100).round(2)
     return g.sort_values("Total", ascending=False).reset_index()
+
+
+# ---------------------------------------------------------------------------
+# Contractor deadline follow-up
+# ---------------------------------------------------------------------------
+# A contractor has fulfilled a committed deadline when the CDEF is in one of
+# these statuses. "Awaiting approval" is already normalised to "Reported ready"
+# by _finalize. A CDEF that was reported ready and then rejected is back to
+# "Rejected", so it counts as not fulfilled.
+FULFILLED_STATUSES = {"Approved", "Approved, follow-up", "Reported ready"}
+WITHDRAWN_STATUSES = {"Discontinued"}
+
+DL_MISSED = "Missed"
+DL_DUE_SOON = "Due within 7 days"
+DL_NOT_DUE = "Not yet due"
+DL_ON_TIME = "Met on time"
+DL_LATE = "Met late"
+DL_UNCONFIRMED = "Met, timing unconfirmed"
+DL_WITHDRAWN = "Discontinued"
+DL_NOT_FOUND = "Not in Dalux export"
+DL_ORDER = [DL_MISSED, DL_DUE_SOON, DL_NOT_DUE, DL_ON_TIME, DL_LATE, DL_UNCONFIRMED,
+            DL_WITHDRAWN, DL_NOT_FOUND]
+
+_DL_ID_COLS = ["CDEF No.", "CDEF No", "CDEF", "CDEF number", "No."]
+_DL_DATE_COLS = ["Parsed deadline", "Deadline", "Committed deadline"]
+_DL_CONTR_COLS = ["Contractor", "Worksheet", "Work package"]
+_DL_SHEET_PREFERENCE = ["Source deadlines", "CDEF Follow-up"]
+
+
+def cdef_key(value, sg=None):
+    """Normalise a CDEF number for matching: 'cdef 1234', 'CDEF-1234' ->
+    'CDEF1234'; 'CDEF-SG82', 'CDEF SG 82' -> 'CDEF-SG82'.
+
+    `sg=True/False` forces the prefix (used for rows of the SG / main export,
+    whatever their own No. format looks like). Returns None if no number."""
+    import re
+    txt = str(value or "").strip().upper()
+    m = re.search(r"(\d+)\s*$", txt)
+    if not m:
+        return None
+    is_sg = bool(re.search(r"\bSG|-SG|SG\s*\d", txt)) if sg is None else sg
+    return f"CDEF-SG{int(m.group(1))}" if is_sg else f"CDEF{int(m.group(1))}"
+
+
+def _dl_find_table(xl, sheet):
+    """Return (header_row, id_col, date_col) for a deadline table, or None."""
+    probe = pd.read_excel(xl, sheet_name=sheet, header=None, nrows=20, dtype=str)
+    for i in range(len(probe)):
+        vals = [str(v).strip() for v in probe.iloc[i].tolist()]
+        id_col = next((c for c in _DL_ID_COLS if c in vals), None)
+        date_col = next((c for c in _DL_DATE_COLS if c in vals), None)
+        if id_col and date_col:
+            return i, id_col, date_col
+    return None
+
+
+def load_deadlines(src):
+    """Read the contractor deadline workbook.
+
+    Accepts the full CDEF_Status_Summary workbook (its 'Source deadlines'
+    sheet is used; only rows marked 'Dated register' when that column exists)
+    or any simple sheet with a CDEF number column and a deadline column.
+
+    Returns (deadlines, review):
+      deadlines - one row per CDEF: key, cdef_no, contractor, deadline, source
+      review    - rows whose deadline is not a usable date (text notes etc.)
+    """
+    if hasattr(src, "seek"):
+        src.seek(0)
+    xl = pd.ExcelFile(src)
+    sheets = ([s for s in _DL_SHEET_PREFERENCE if s in xl.sheet_names]
+              + [s for s in xl.sheet_names if s not in _DL_SHEET_PREFERENCE])
+    found = None
+    for sh in sheets:
+        t = _dl_find_table(xl, sh)
+        if t:
+            found = (sh,) + t
+            break
+    if not found:
+        raise ValueError(
+            "No deadline table found. The workbook needs a sheet with a CDEF "
+            "number column (e.g. 'CDEF No.') and a deadline column "
+            "(e.g. 'Deadline' or 'Parsed deadline').")
+    sheet, hdr_row, id_col, date_col = found
+    raw = pd.read_excel(xl, sheet_name=sheet, header=hdr_row)
+    raw = raw[raw[id_col].notna()].copy()
+
+    use_col = "Use in summary" if "Use in summary" in raw.columns else None
+    contr_col = next((c for c in _DL_CONTR_COLS if c in raw.columns), None)
+    orig_col = "Original deadline" if "Original deadline" in raw.columns else None
+
+    raw["key"] = raw[id_col].apply(cdef_key)
+    raw["deadline"] = pd.to_datetime(raw[date_col], errors="coerce").dt.normalize()
+    raw["cdef_no"] = raw[id_col].astype(str).str.strip()
+    raw["contractor"] = (raw[contr_col].astype(str).str.strip()
+                         .str.replace(r"\s+scope$", "", regex=True)
+                         if contr_col else "")
+    raw["original"] = raw[orig_col] if orig_col else raw[date_col]
+    raw["source"] = sheet + (": " + raw["Source cell"].astype(str)
+                             if "Source cell" in raw.columns else "")
+
+    # Contractor from the curated follow-up register wins over the raw
+    # worksheet name (e.g. 'Synergy scope' rows belong to 'Synergy').
+    if sheet == "Source deadlines" and "CDEF Follow-up" in xl.sheet_names:
+        t = _dl_find_table(xl, "CDEF Follow-up")
+        if t:
+            fu = pd.read_excel(xl, sheet_name="CDEF Follow-up", header=t[0])
+            if "Contractor" in fu.columns:
+                fu = fu[fu[t[1]].notna()]
+                cmap = dict(zip(fu[t[1]].apply(cdef_key),
+                                fu["Contractor"].astype(str).str.strip()))
+                raw["contractor"] = raw["key"].map(cmap).fillna(raw["contractor"])
+
+    if use_col:
+        selected = raw[raw[use_col].astype(str).str.strip() == "Dated register"]
+        review_mask = raw[use_col].astype(str).str.strip() == "Review"
+    else:
+        selected = raw[raw["deadline"].notna()]
+        review_mask = raw["deadline"].isna()
+
+    review = raw[review_mask][["cdef_no", "contractor", "original", "source"]]
+    selected = selected[selected["deadline"].notna() & selected["key"].notna()]
+    # If a CDEF still has several dates, keep the latest (the current
+    # commitment) and say how many dates the file held.
+    n_dates = selected.groupby("key")["deadline"].transform("nunique")
+    selected = (selected.assign(n_dates=n_dates)
+                .sort_values("deadline")
+                .drop_duplicates("key", keep="last"))
+    deadlines = selected[["key", "cdef_no", "contractor", "deadline",
+                          "n_dates", "source"]].reset_index(drop=True)
+    return deadlines, review.reset_index(drop=True)
+
+
+def export_snapshot_date(df):
+    """Latest 'Date modified' in the export: the moment its statuses describe."""
+    m = df["modified"].dropna()
+    return m.max().date() if not m.empty else dt.date.today()
+
+
+def _changed_by_contractor(modified_by):
+    """True when 'Name, Company' names a company other than CÉH or EVE."""
+    company = str(modified_by or "").rsplit(",", 1)[-1].strip().upper()
+    return bool(company) and not ("CÉH" in company or "CEH" in company
+                                  or company.startswith("EVE"))
+
+
+def _fulfilled_date(row):
+    """(date, exact) - when the CDEF reached its fulfilled status.
+
+    Reported ready, last changed by the contractor: 'Date modified' is the
+    moment they reported it ready (exact).
+    Approved: creation + Dalux 'Resolution time' = the approval moment. The
+    contractor reported ready on or before that, so the date is only an upper
+    bound (not exact).
+    Anything else: 'Date modified', also an upper bound.
+    """
+    if row["status"] == "Reported ready" and _changed_by_contractor(row.get("modified_by")):
+        return row["modified"], True
+    if (row["status"] == "Approved" and pd.notna(row.get("resolution_days"))
+            and pd.notna(row["created"])):
+        return row["created"] + pd.to_timedelta(row["resolution_days"], unit="D"), False
+    return row["modified"], False
+
+
+def deadline_followup(df, df_sg, deadlines, as_of):
+    """Classify every committed deadline against the Dalux status.
+
+    `as_of` (date): deadlines strictly before it are due. The deadline day
+    itself still counts as in time. Returns one row per committed CDEF.
+    """
+    frames = []
+    for data, is_sg in ((df, False), (df_sg, True)):
+        if data is not None and not data.empty:
+            d = data.copy()
+            d["key"] = d["id"].apply(lambda v: cdef_key(v, sg=is_sg))
+            frames.append(d)
+    dal = (pd.concat(frames, ignore_index=True).drop_duplicates("key")
+           if frames else pd.DataFrame(columns=["key"]))
+    keep = ["key", "id", "subject", "contractor", "status", "role",
+            "created", "modified", "modified_by", "resolution_days"]
+    dal = dal[[c for c in keep if c in dal.columns]].rename(
+        columns={"contractor": "work_package"})
+    m = deadlines.merge(dal, on="key", how="left")
+
+    as_of = pd.Timestamp(as_of)
+    m["fulfilled_by"] = pd.NaT
+    m["date_exact"] = False
+    ful = m["status"].isin(FULFILLED_STATUSES)
+    if ful.any():
+        fd = m[ful].apply(_fulfilled_date, axis=1)
+        m.loc[ful, "fulfilled_by"] = [d for d, _ in fd]
+        m.loc[ful, "date_exact"] = [e for _, e in fd]
+    m["fulfilled_by"] = pd.to_datetime(m["fulfilled_by"]).dt.normalize()
+
+    def classify(r):
+        if pd.isna(r["status"]):
+            return DL_NOT_FOUND
+        if r["status"] in WITHDRAWN_STATUSES:
+            return DL_WITHDRAWN
+        if r["status"] in FULFILLED_STATUSES:
+            if r["fulfilled_by"] <= r["deadline"]:
+                return DL_ON_TIME
+            return DL_LATE if r["date_exact"] else DL_UNCONFIRMED
+        if r["deadline"] < as_of:
+            return DL_MISSED
+        if r["deadline"] <= as_of + pd.Timedelta(days=7):
+            return DL_DUE_SOON
+        return DL_NOT_DUE
+
+    m["result"] = m.apply(classify, axis=1)
+    m["days_overdue"] = [
+        int((as_of - d).days) if res == DL_MISSED else None
+        for d, res in zip(m["deadline"], m["result"])]
+    m["days_left"] = [
+        int((d - as_of).days) if res in (DL_DUE_SOON, DL_NOT_DUE) else None
+        for d, res in zip(m["deadline"], m["result"])]
+    m["result"] = pd.Categorical(m["result"], categories=DL_ORDER, ordered=True)
+    return m.sort_values(["result", "deadline", "contractor"]).reset_index(drop=True)
+
+
+def deadline_contractor_summary(fu, as_of):
+    """Per contractor: committed deadlines that fell due before `as_of`, how
+    many were met, and how many were missed."""
+    as_of = pd.Timestamp(as_of)
+    live = fu[~fu["result"].isin([DL_WITHDRAWN, DL_NOT_FOUND])]
+    due = live[live["deadline"] < as_of]
+    g = pd.DataFrame({
+        "Committed": live.groupby("contractor").size(),
+        "Due": due.groupby("contractor").size(),
+        "Met on time": due[due["result"] == DL_ON_TIME].groupby("contractor").size(),
+        "Met late": due[due["result"] == DL_LATE].groupby("contractor").size(),
+        "Met, timing unconfirmed": due[due["result"] == DL_UNCONFIRMED].groupby("contractor").size(),
+        "Missed": due[due["result"] == DL_MISSED].groupby("contractor").size(),
+        "Due within 7 days": live[live["result"] == DL_DUE_SOON].groupby("contractor").size(),
+    }).fillna(0).astype(int)
+    g["Missed %"] = (g["Missed"] / g["Due"].where(g["Due"] > 0) * 100).round(1).fillna(0.0)
+    g = g.sort_values(["Missed", "Due"], ascending=False)
+    total = g.drop(columns="Missed %").sum()
+    total["Missed %"] = round(total["Missed"] / total["Due"] * 100, 1) if total["Due"] else 0.0
+    g.loc["Total"] = total
+    ints = [c for c in g.columns if c != "Missed %"]
+    g[ints] = g[ints].astype(int)
+    g.index.name = "Contractor"
+    return g.reset_index()

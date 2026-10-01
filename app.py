@@ -114,6 +114,14 @@ with st.sidebar.expander("Top 10 issues tracker", expanded=False):
     top10_file = st.file_uploader("Top 10 issues (optional)",
                                   type=["xlsx"], key="top10file")
 
+with st.sidebar.expander("Contractor deadlines", expanded=False):
+    st.caption(
+        "Upload the deadline workbook (e.g. *CDEF_Status_Summary.xlsx*, or any "
+        "sheet with a CDEF number and a deadline column) to check the committed "
+        "deadlines against the Dalux status on the **Deadlines** tab.")
+    deadline_file = st.file_uploader("Deadline workbook (optional)",
+                                     type=["xlsx", "xlsm"], key="deadlinefile")
+
 _ov_bytes = ov_file.getvalue() if ov_file is not None else None
 
 df = None
@@ -160,7 +168,8 @@ if df is not None and df_sg is None and "is_sg" in df.columns and df["is_sg"].an
         df = None
 
 
-def render_dashboard(df, _kp, _kp_label, top10_file=None):
+def render_dashboard(df, _kp, _kp_label, top10_file=None,
+                     period_days=7, noun="week", span="Fri–Thu"):
     """Render the full dashboard for one defect set.
 
     `df`   - the loaded defects for this tab
@@ -221,12 +230,12 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
         st.warning("No defects match the current filters. Add some tags back, or widen the date range.")
         st.stop()
 
-    weekly = cd.rolling_metrics(fdf)
+    weekly = cd.rolling_metrics(fdf, period_days=period_days)
     last, prev = weekly.iloc[-1], weekly.iloc[-2] if len(weekly) > 1 else weekly.iloc[-1]
 
     # ---------------- header ----------------
-    st.caption(f"EVE Factory Project Debrecen · {_kp_label} · latest reporting week "
-               f"{last['ISO week']} (Fri–Thu) "
+    st.caption(f"EVE Factory Project Debrecen · {_kp_label} · latest reporting {noun} "
+               f"{last['ISO week']} ({span}) "
                f"· {len(fdf)} defects in view")
 
 
@@ -237,15 +246,15 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
         n_cols = 6 if extra_rr_ceh else 4
         cols = st.columns(n_cols)
         k1, k2, k3, k4 = cols[0], cols[1], cols[2], cols[3]
-        k1.metric("Total defects (to date)", int(_last["Total defects (cumulative)"]),
-                  f"{int(_last['Total Δ vs prev']):+d} in latest week", delta_color="off",
-                  help="Cumulative count of all defects raised so far. The delta is how many were added in the latest reporting week.")
-        k2.metric(f"New defects ({wk})", int(_last["New defects"]),
-                  f"{int(_last['New Δ vs prev']):+d} vs previous week", delta_color="inverse",
-                  help=f"Defects raised in the reporting week {wk} (Fri–Thu). More new defects is worse (red); fewer is better (green).")
-        k3.metric(f"Accepted ({wk})", int(_last["Accepted defects"]),
-                  f"{int(_last['Accepted Δ vs prev']):+d} vs previous week", delta_color="normal",
-                  help=f"Defects approved/closed in the reporting week {wk} (Fri–Thu). More accepted is better (green); fewer is worse (red).")
+        k1.metric("Total defects (to date)", cd.safe_int(_last["Total defects (cumulative)"]),
+                  f"{cd.safe_int(_last['Total Δ vs prev']):+d} in latest {noun}", delta_color="off",
+                  help=f"Cumulative count of all defects raised so far. The delta is how many were added in the latest reporting {noun}.")
+        k2.metric(f"New defects ({wk})", cd.safe_int(_last["New defects"]),
+                  f"{cd.safe_int(_last['New Δ vs prev']):+d} vs previous {noun}", delta_color="inverse",
+                  help=f"Defects raised in the reporting {noun} {wk} ({span}). More new defects is worse (red); fewer is better (green).")
+        k3.metric(f"Accepted ({wk})", cd.safe_int(_last["Accepted defects"]),
+                  f"{cd.safe_int(_last['Accepted Δ vs prev']):+d} vs previous {noun}", delta_color="normal",
+                  help=f"Defects approved/closed in the reporting {noun} {wk} ({span}). More accepted is better (green); fewer is worse (red).")
         open_n = int((~_df["is_accepted"] & ~_df["status"].isin(["Discontinued", "Rejected"])).sum())
         k4.metric("Open defects (now)", open_n,
                   help="Defects not yet approved, discontinued, or rejected — i.e. currently outstanding.")
@@ -253,7 +262,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
             rr = cd.reported_ready_ceh(_df)
             cols[4].metric("Reported ready · CÉH", rr,
                            help="Defects the contractor has reported ready (shown as 'Awaiting approval' in the contractor's Dalux) that are with CÉH, awaiting approval/closure.")
-            rates = cd.week_resolution_rates(_df)
+            rates = cd.week_resolution_rates(_df, period_days=period_days)
             cols[5].metric(
                 f"Resolved of {wk} intake",
                 f"{rates['pct_todate']:.2f}%",
@@ -271,7 +280,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
             fig = make_subplots(specs=[[{"secondary_y": True}]])
             fig.add_bar(x=_weekly["ISO week"], y=_weekly[valcol], name=valcol,
                         marker_color=color, opacity=0.9)
-            fig.add_scatter(x=_weekly["ISO week"], y=_weekly[dcol], name="Δ vs prev week",
+            fig.add_scatter(x=_weekly["ISO week"], y=_weekly[dcol], name=f"Δ vs prev {noun}",
                             mode="lines+markers", line=dict(color="#8A94A6", width=2),
                             marker=dict(size=4), secondary_y=True)
             fig.update_layout(height=300, margin=dict(l=10, r=10, t=10, b=10),
@@ -302,11 +311,11 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
 
 
     def all_trends(_weekly, key=""):
-        trend_block(_weekly, "New defects per week (Fri–Thu)", "New defects",
+        trend_block(_weekly, f"New defects per {noun} ({span})", "New defects",
                     "New Δ vs prev", "New Δ %", BLUE, key=key, good="down")
-        trend_block(_weekly, "Accepted defects per week (Fri–Thu)", "Accepted defects",
+        trend_block(_weekly, f"Accepted defects per {noun} ({span})", "Accepted defects",
                     "Accepted Δ vs prev", "Accepted Δ %", GREEN, key=key, good="up")
-        trend_block(_weekly, "Total defects (cumulative) per week (Fri–Thu)",
+        trend_block(_weekly, f"Total defects (cumulative) per {noun} ({span})",
                     "Total defects (cumulative)", "Total Δ vs prev", "Total Δ %", NAVY,
                     key=key, good="neutral")
 
@@ -328,7 +337,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
     # ---------------- focused contractor section ----------------
     if focus != "All contractors":
         cdf = fdf[fdf["contractor"] == focus].copy()
-        cweekly = cd.rolling_metrics(cdf)
+        cweekly = cd.rolling_metrics(cdf, period_days=period_days)
         st.subheader(f"📌 {focus} — {len(cdf)} defects")
         render_kpis(cdf, cweekly)
         st.markdown("")
@@ -408,23 +417,23 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
     if contractor_df.empty:
         st.caption("No defects currently with the contractor in this view.")
     else:
-        render_kpis(contractor_df, cd.rolling_metrics(contractor_df))
+        render_kpis(contractor_df, cd.rolling_metrics(contractor_df, period_days=period_days))
 
     st.markdown("#### 🏢 With CÉH/EVE")
     st.caption("Defects whose Role starts with *CÉH* or *EVE* — with us for review/action.")
     if cehve_df.empty:
         st.caption("No defects currently with CÉH/EVE in this view.")
     else:
-        render_kpis(cehve_df, cd.rolling_metrics(cehve_df))
+        render_kpis(cehve_df, cd.rolling_metrics(cehve_df, period_days=period_days))
 
     st.divider()
 
     # ---------------- Resolution by defect type ----------------
-    _rates = cd.week_resolution_rates(fdf)
+    _rates = cd.week_resolution_rates(fdf, period_days=period_days)
     st.subheader(f"Resolution by defect type — {_rates['label']} intake")
 
     if not _rates["by_type"]:
-        st.info("No defects were raised in the latest reporting week.")
+        st.info(f"No defects were raised in the latest reporting {noun}.")
     else:
         # Headline summary strip
         _tot_pct = _rates["pct_todate"]
@@ -512,7 +521,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
     st.subheader(f"Resolution by contractor — {_rates['label']} intake")
 
     if not _rates.get("by_contractor_type"):
-        st.info("No defects were raised in the latest reporting week.")
+        st.info(f"No defects were raised in the latest reporting {noun}.")
     else:
         _bct = pd.DataFrame(_rates["by_contractor_type"])
         _bc = pd.DataFrame(_rates["by_contractor"]).sort_values("new", ascending=False)
@@ -600,6 +609,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                             "Resolved %", "In-week %"]
             st.dataframe(
                 _tbl, hide_index=True, width="stretch",
+                key=f"{_kp}_tbl_ctr_type",
                 height=min(520, max(200, 40 * (len(_tbl) + 1))),
                 column_config={
                     "Raised": st.column_config.NumberColumn("Raised", format="%d"),
@@ -683,7 +693,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
 
         _disp = _pf[["Contractor", "Top 10 reply %", _wk_col, "Overall closing %"]]
         st.dataframe(
-            _disp, hide_index=True, width="stretch",
+            _disp, hide_index=True, width="stretch", key=f"{_kp}_tbl_perf",
             column_config={c: st.column_config.NumberColumn(c, format="%.2f%%")
                            for c in _disp.columns if c != "Contractor"})
 
@@ -694,7 +704,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
             f"""<div style="font-size:0.95rem;color:{MUTED};margin-top:8px;">
             <b>Top 10 reply %</b> — issues in the Top-10 tracker marked approved/resolved,
             out of those listed. &nbsp;
-            <b>{_rates['label']} closing %</b> — defects raised in the reporting week that
+            <b>{_rates['label']} closing %</b> — defects raised in the reporting {noun} that
             are now resolved. &nbsp;
             <b>Overall closing %</b> — all defects to date that are resolved.
             Resolved = <i>Approved</i> / <i>Approved, follow-up</i>.
@@ -727,13 +737,13 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
                           font=dict(family="Inter, Segoe UI, sans-serif", size=12, color=INK))
         fig.update_xaxes(gridcolor="#EEF1F5", zerolinecolor="#E2E6EC")
         fig.update_yaxes(showgrid=False)
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(fig, width="stretch", key=f"{_kp}_chart_bycontractor")
 
     with cc2:
         disp = csum.rename(columns={"contractor": "Contractor"})
         st.dataframe(
             disp,
-            hide_index=True, width="stretch",
+            hide_index=True, width="stretch", key=f"{_kp}_tbl_csum",
             height=max(320, 42 * len(disp)),
             column_config={
                 "Total": st.column_config.NumberColumn("Total", format="%d"),
@@ -746,7 +756,7 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
     st.divider()
 
     # ---------------- Rolling trends (overall) ----------------
-    st.subheader("Weekly trends (Fri–Thu) — with previous-week comparison")
+    st.subheader(f"Trends by {noun} ({span}) — with previous-{noun} comparison")
     all_trends(weekly, key="overall")
 
     st.divider()
@@ -757,26 +767,159 @@ def render_dashboard(df, _kp, _kp_label, top10_file=None):
 # ---------------- Tabs: CDEF and CDEF-SG ----------------
 import build_excel as be
 
-_sets = []
+_datasets = []
 if df is not None and not df.empty:
-    _sets.append(("CDEF", "cdef", "CDEF", df))
+    _datasets.append(("CDEF", "cdef", df))
 if df_sg is not None and not df_sg.empty:
-    _sets.append((f"CDEF-SG ({len(df_sg)})", "sg", "CDEF-SG", df_sg))
+    _datasets.append(("CDEF-SG", "sg", df_sg))
 
-_tabs = st.tabs([label for label, _, _, _ in _sets])
+# Each dataset gets a Weekly (Fri–Thu) and a Daily (yesterday) tab.
+_PERIODS = [("Weekly", "wk", 7, "week", "Fri–Thu"),
+            ("Daily", "dy", 1, "day", "full day")]
+
+_sets = []
+for _short, _dkp, _data in _datasets:
+    for _pname, _pkp, _pdays, _noun, _span in _PERIODS:
+        _sets.append((f"{_short} — {_pname}", f"{_dkp}_{_pkp}", _short,
+                      _data, _pdays, _noun, _span))
+
+_tabs = st.tabs([label for label, *_ in _sets] + ["Deadlines"])
 
 _results = {}
-for _tab, (_label, _kp, _short, _data) in zip(_tabs, _sets):
+for _tab, (_label, _kp, _short, _data, _pdays, _noun, _span) in zip(_tabs, _sets):
     with _tab:
-        _results[_kp] = render_dashboard(_data, _kp, _short, top10_file=top10_file)
+        _results[_kp] = render_dashboard(
+            _data, _kp, _short, top10_file=top10_file,
+            period_days=_pdays, noun=_noun, span=_span)
+
+
+# ---------------- Deadlines tab ----------------
+@st.cache_data(show_spinner=False)
+def _load_deadlines(file_bytes):
+    return cd.load_deadlines(io.BytesIO(file_bytes))
+
+
+def render_deadlines():
+    """Committed contractor deadlines vs current Dalux status.
+    Returns (followup, summary, review, as_of) for the Excel report, or None."""
+    st.subheader("Contractor deadline follow-up")
+    if deadline_file is None:
+        st.info("👈 Upload the **deadline workbook** in the sidebar "
+                "(*Contractor deadlines*) to check committed deadlines against Dalux.")
+        return None
+    try:
+        dl, review = _load_deadlines(deadline_file.getvalue())
+    except Exception as e:
+        st.error(f"Couldn't read the deadline workbook: {e}")
+        return None
+
+    _all = [d for d in (df, df_sg) if d is not None and not d.empty]
+    snap = max(cd.export_snapshot_date(d) for d in _all)
+    as_of = st.date_input(
+        "Check deadlines as of", snap, key="dl_asof",
+        help="Deadlines before this date are due. Defaults to the date of the "
+             "Dalux export, because the statuses describe that moment.")
+
+    fu = cd.deadline_followup(df, df_sg, dl, as_of)
+    summ = cd.deadline_contractor_summary(fu, as_of)
+    tot = summ[summ["Contractor"] == "Total"].iloc[0]
+
+    st.caption(f"{len(dl)} committed deadlines · statuses from the Dalux export of "
+               f"{snap:%d %b %Y} · a deadline counts as due once its day has passed")
+    k = st.columns(6)
+    k[0].metric("Due", int(tot["Due"]))
+    k[1].metric("Met on time", int(tot["Met on time"]))
+    k[2].metric("Met late", int(tot["Met late"]))
+    k[3].metric("Met, timing unconfirmed", int(tot["Met, timing unconfirmed"]))
+    k[4].metric("Missed", int(tot["Missed"]), f"{tot['Missed %']:.1f}% of due",
+                delta_color="off")
+    k[5].metric("Due within 7 days", int(tot["Due within 7 days"]))
+
+    st.markdown("#### By contractor")
+    st.dataframe(
+        summ, hide_index=True, width="stretch",
+        column_config={"Missed %": st.column_config.ProgressColumn(
+            "Missed %", format="%.1f%%", min_value=0, max_value=100)})
+
+    view_cols = {"cdef_no": "CDEF No.", "contractor": "Contractor",
+                 "subject": "Subject", "deadline": "Deadline",
+                 "status": "Dalux status", "fulfilled_by": "Fulfilled by",
+                 "days_overdue": "Days overdue", "days_left": "Days left",
+                 "role": "Role (Dalux)", "modified_by": "Modified by"}
+
+    def _table(rows, cols):
+        t = rows[cols].rename(columns=view_cols)
+        st.dataframe(t, hide_index=True, width="stretch",
+                     column_config={
+                         "Deadline": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                         "Fulfilled by": st.column_config.DateColumn(format="YYYY-MM-DD")})
+
+    contractors = sorted(fu["contractor"].dropna().unique())
+    pick = st.multiselect("Contractor", contractors, default=contractors, key="dl_contr")
+    sel = fu[fu["contractor"].isin(pick)]
+
+    missed = sel[sel["result"] == cd.DL_MISSED].sort_values("days_overdue", ascending=False)
+    st.markdown(f"#### Missed deadlines ({len(missed)})")
+    st.caption("Deadline passed and the CDEF is still New, Ongoing or Rejected.")
+    _table(missed, ["cdef_no", "contractor", "subject", "deadline", "status",
+                    "days_overdue", "role"])
+
+    soon = sel[sel["result"] == cd.DL_DUE_SOON]
+    st.markdown(f"#### Due within 7 days ({len(soon)})")
+    _table(soon, ["cdef_no", "contractor", "subject", "deadline", "status",
+                  "days_left", "role"])
+
+    late = sel[sel["result"] == cd.DL_LATE]
+    with st.expander(f"Met late ({len(late)})"):
+        st.caption("Reported ready by the contractor after the deadline. Date "
+                   "modified is the report-ready date, since the contractor made "
+                   "that last change.")
+        _table(late, ["cdef_no", "contractor", "subject", "deadline", "status",
+                      "fulfilled_by", "modified_by"])
+
+    unconf = sel[sel["result"] == cd.DL_UNCONFIRMED]
+    with st.expander(f"Met, timing unconfirmed ({len(unconf)})"):
+        st.caption(
+            "Fulfilled, but the only date Dalux gives is after the deadline and "
+            "is not the contractor's own action: the approval date for Approved "
+            "items, or a later change by CÉH/EVE. The contractor may have "
+            "reported ready in time, so these are not counted as late.")
+        _table(unconf, ["cdef_no", "contractor", "subject", "deadline", "status",
+                        "fulfilled_by"])
+
+    other = sel[sel["result"].isin([cd.DL_NOT_FOUND, cd.DL_WITHDRAWN])]
+    if not other.empty or not review.empty:
+        with st.expander(f"Not checked ({len(other) + len(review)})"):
+            if not other.empty:
+                st.caption("Not in the loaded Dalux export(s), or Discontinued. "
+                           "CDEF-SG numbers need the CDEF-SG export in the sidebar.")
+                t = other[["cdef_no", "contractor", "deadline", "result"]].copy()
+                t["result"] = t["result"].astype(str)
+                st.dataframe(t.rename(columns={**view_cols, "result": "Reason"}),
+                             hide_index=True, width="stretch")
+            if not review.empty:
+                st.caption("Deadline field is text, not a date.")
+                r = review.copy()
+                r["original"] = r["original"].astype(str)
+                st.dataframe(r.rename(columns={"cdef_no": "CDEF No.",
+                                               "contractor": "Contractor",
+                                               "original": "Deadline text",
+                                               "source": "Source"}),
+                             hide_index=True, width="stretch")
+    return fu, summ, review, as_of
+
+
+with _tabs[-1]:
+    _deadline_result = render_deadlines()
 
 # ---------------- Export: one combined workbook ----------------
 st.divider()
 st.subheader("Export")
-_parts = " and ".join(s[2] for s in _sets)
-st.caption(f"Download a single Excel report covering **{_parts}** — all loaded data. "
-           "CDEF-SG figures are on their own `SG …` sheets. The sidebar filters and "
-           "contractor focus do not affect this report.")
+_parts = " and ".join(dict.fromkeys(s[2] for s in _sets))
+st.caption(f"Download a single Excel report covering **{_parts}** — all loaded data, "
+           "with both **weekly** and **daily** sheet sets. CDEF-SG figures are on their "
+           "own `SG …` sheets and daily figures on `Daily …` sheets. The sidebar filters "
+           "and contractor focus do not affect this report.")
 
 _t10_x = None
 if top10_file is not None:
@@ -787,14 +930,18 @@ if top10_file is not None:
 
 
 @st.cache_data(show_spinner="Building Excel report…")
-def _report_bytes(token, _main, _sg, _top10):
-    return be.build_report_bytes(_main, top10=_top10, df_sg=_sg)
+def _report_bytes(token, _main, _sg, _top10, _deadlines):
+    return be.build_report_bytes(_main, top10=_top10, df_sg=_sg,
+                                 deadlines=_deadlines)
 
 
+_dl_token = ("none" if _deadline_result is None else
+             f"{len(_deadline_result[0])}-{_deadline_result[3]}"
+             f"-{hash(deadline_file.getvalue())}")
 _token = (f"{0 if df is None else len(df)}-{0 if df_sg is None else len(df_sg)}"
-          f"-{0 if _t10_x is None else len(_t10_x)}-{dt.date.today()}")
+          f"-{0 if _t10_x is None else len(_t10_x)}-{dt.date.today()}-{_dl_token}")
 try:
-    _bytes = _report_bytes(_token, df, df_sg, _t10_x)
+    _bytes = _report_bytes(_token, df, df_sg, _t10_x, _deadline_result)
     st.download_button(
         "⬇️ Download Excel report",
         data=_bytes,
@@ -808,10 +955,12 @@ with st.expander("Definitions & method"):
     st.markdown("""
 - **Contractor** = Work Package (Dalux column I) — populated for all CDEF records, including closed ones.
 - **Reporting weeks** run **Friday 00:00 → Thursday 24:00**. The latest window shown is the last *complete* Fri–Thu week.
+- **Daily** tabs report on **yesterday** (the last complete calendar day, 00:00 → 24:00), with deltas against the day before.
 - **New defects** = count by *date created*, within each Fri–Thu week.
 - **Accepted defects** = status *Approved* / *Approved, follow-up*, dated by *last-modified* (approval) date, within each Fri–Thu week.
   Dalux does not expose a dedicated approval date in the export, so the modified date is used as the closure timestamp.
 - **Total defects** = cumulative count of all defects raised up to and including the end of that window.
 - **Δ vs prev** = change against the previous Fri–Thu week.
 - **CDEF-SG** defects come from the *Construction Defect - SG* Dalux export. They appear on their own dashboard tab and on `SG …` sheets in the Excel report.
+- **Deadlines** tab: each committed deadline in the uploaded deadline workbook is matched to its CDEF by number. *Met* = status Approved, Approved follow-up or Reported ready (Reported ready then Rejected counts as not met). For *Reported ready* items last modified by the contractor, *Date modified* is the report-ready date: on or before the deadline = *Met on time*, after = *Met late*. For *Approved* items the date is the approval date (Date created + Dalux *Resolution time*); the contractor reported ready on or before it, so approval by the deadline = *Met on time*, approval after it = *Met, timing unconfirmed*. The same applies to items whose last change was made by CÉH/EVE. *Missed* = deadline day passed and the CDEF is still New, Ongoing or Rejected. *Missed %* = Missed ÷ Due. Discontinued CDEFs and CDEFs not in the export are listed but not counted.
 """)
