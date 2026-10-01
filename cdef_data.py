@@ -953,24 +953,32 @@ def deadline_followup(df, df_sg, deadlines, as_of):
 
 
 def deadline_contractor_summary(fu, as_of):
-    """Per contractor: committed deadlines that fell due before `as_of`, how
-    many were met, and how many were missed."""
+    """Per contractor, every committed deadline in exactly one column, so the
+    columns add up to 'Committed'. Fulfilled items count as met even when the
+    deadline is still ahead. 'Deadline passed' and 'Missed %' cover only the
+    deadlines whose day is over."""
     as_of = pd.Timestamp(as_of)
     live = fu[~fu["result"].isin([DL_WITHDRAWN, DL_NOT_FOUND])]
-    due = live[live["deadline"] < as_of]
+
+    def n(mask):
+        return live[mask].groupby("contractor").size()
+
     g = pd.DataFrame({
         "Committed": live.groupby("contractor").size(),
-        "Due": due.groupby("contractor").size(),
-        "Met on time": due[due["result"] == DL_ON_TIME].groupby("contractor").size(),
-        "Met late": due[due["result"] == DL_LATE].groupby("contractor").size(),
-        "Met, timing unconfirmed": due[due["result"] == DL_UNCONFIRMED].groupby("contractor").size(),
-        "Missed": due[due["result"] == DL_MISSED].groupby("contractor").size(),
-        "Due within 7 days": live[live["result"] == DL_DUE_SOON].groupby("contractor").size(),
+        "Met on time": n(live["result"] == DL_ON_TIME),
+        "Met late": n(live["result"] == DL_LATE),
+        "Met, timing unconfirmed": n(live["result"] == DL_UNCONFIRMED),
+        "Missed": n(live["result"] == DL_MISSED),
+        "Open, due within 7 days": n(live["result"] == DL_DUE_SOON),
+        "Open, due later": n(live["result"] == DL_NOT_DUE),
+        "Deadline passed": n(live["deadline"] < as_of),
     }).fillna(0).astype(int)
-    g["Missed %"] = (g["Missed"] / g["Due"].where(g["Due"] > 0) * 100).round(1).fillna(0.0)
-    g = g.sort_values(["Missed", "Due"], ascending=False)
+    g["Missed %"] = (g["Missed"] / g["Deadline passed"].where(g["Deadline passed"] > 0)
+                     * 100).round(1).fillna(0.0)
+    g = g.sort_values(["Missed", "Committed"], ascending=False)
     total = g.drop(columns="Missed %").sum()
-    total["Missed %"] = round(total["Missed"] / total["Due"] * 100, 1) if total["Due"] else 0.0
+    total["Missed %"] = (round(total["Missed"] / total["Deadline passed"] * 100, 1)
+                         if total["Deadline passed"] else 0.0)
     g.loc["Total"] = total
     ints = [c for c in g.columns if c != "Missed %"]
     g[ints] = g[ints].astype(int)

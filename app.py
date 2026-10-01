@@ -827,13 +827,18 @@ def render_deadlines():
     st.caption(f"{len(dl)} committed deadlines · statuses from the Dalux export of "
                f"{snap:%d %b %Y} · a deadline counts as due once its day has passed")
     k = st.columns(6)
-    k[0].metric("Due", int(tot["Due"]))
+    k[0].metric("Committed", int(tot["Committed"]))
     k[1].metric("Met on time", int(tot["Met on time"]))
     k[2].metric("Met late", int(tot["Met late"]))
     k[3].metric("Met, timing unconfirmed", int(tot["Met, timing unconfirmed"]))
-    k[4].metric("Missed", int(tot["Missed"]), f"{tot['Missed %']:.1f}% of due",
+    k[4].metric("Missed", int(tot["Missed"]),
+                f"{tot['Missed %']:.1f}% of {int(tot['Deadline passed'])} passed",
                 delta_color="off")
-    k[5].metric("Due within 7 days", int(tot["Due within 7 days"]))
+    k[5].metric("Open, due within 7 days", int(tot["Open, due within 7 days"]))
+    st.caption("Each committed deadline sits in one column, so the columns add up "
+               "to *Committed*. *Met* includes items finished ahead of a deadline "
+               "that is still to come. *Open* = New, Ongoing or Rejected. "
+               "*Missed %* is taken over the deadlines whose day has passed.")
 
     st.markdown("#### By contractor")
     st.dataframe(

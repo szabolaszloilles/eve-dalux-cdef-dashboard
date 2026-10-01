@@ -354,8 +354,10 @@ def add_deadline_sheets(wb, followup, summary, review, as_of):
     hdr(ws.cell(row=1, column=1), "Contractor deadline follow-up", size=14, align="left")
     ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(summary.columns))
     ws.cell(row=2, column=1).value = (
-        f"Status as of {as_of_txt} (Dalux export). Due = committed deadline before "
-        f"{as_of_txt}. Met = Approved / Approved, follow-up / Reported ready. "
+        f"Status as of {as_of_txt} (Dalux export). Each deadline is in one column; "
+        "they add up to Committed. Met = Approved / Approved, follow-up / Reported "
+        "ready, including items done before a future deadline. Missed % = Missed ÷ "
+        f"deadlines passed (before {as_of_txt}). "
         "Met late = reported ready by the contractor after the deadline. Timing "
         "unconfirmed = approved (or last changed by CÉH/EVE) after the deadline; "
         "the contractor may have reported ready in time.")
