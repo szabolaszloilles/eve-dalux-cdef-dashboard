@@ -46,3 +46,10 @@ Thumbs.db
 
 # Debug screenshots from the scraper
 dalux_failure_*.png
+
+# ---- Local-only files (contractor contacts, server config, copies) ----
+contractors.csv
+pdp_recipients.csv
+dalux_config.ini
+CDEF_Automated_Daily_Reports_r01/
+*.docx
