@@ -846,8 +846,14 @@ def render_deadlines():
     st.markdown("#### By contractor")
     st.dataframe(
         summ, hide_index=True, width="stretch",
-        column_config={"Missed %": st.column_config.ProgressColumn(
-            "Missed %", format="%.1f%%", min_value=0, max_value=100)})
+        height=35 * (len(summ) + 1) + 3,   # show every row, incl. Total
+        column_config={
+            "Missed %": st.column_config.ProgressColumn(
+                "Missed %", format="%.1f%%", min_value=0, max_value=100),
+            cd.OPEN_NO_DEADLINE: st.column_config.NumberColumn(
+                "Open, no deadline",
+                help="Open CDEFs (New, Ongoing, Rejected) that are not in the "
+                     "deadline workbook. Not part of Committed.")})
 
     view_cols = {"cdef_no": "CDEF No.", "contractor": "Contractor",
                  "subject": "Subject", "deadline": "Deadline",

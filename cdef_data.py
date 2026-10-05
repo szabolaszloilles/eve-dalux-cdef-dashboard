@@ -1013,5 +1013,12 @@ def deadline_contractor_summary(fu, as_of, no_deadline=None):
     g.loc["Total"] = total
     ints = [c for c in g.columns if c != "Missed %"]
     g[ints] = g[ints].astype(int)
+    if OPEN_NO_DEADLINE in g.columns:
+        # Keep it beside 'Committed' so it is visible without scrolling and
+        # reads as the counterpart: committed vs still without a commitment.
+        cols = list(g.columns)
+        cols.remove(OPEN_NO_DEADLINE)
+        cols.insert(cols.index("Committed") + 1, OPEN_NO_DEADLINE)
+        g = g[cols]
     g.index.name = "Contractor"
     return g.reset_index()
