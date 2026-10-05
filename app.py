@@ -821,7 +821,8 @@ def render_deadlines():
              "Dalux export, because the statuses describe that moment.")
 
     fu = cd.deadline_followup(df, df_sg, dl, as_of)
-    summ = cd.deadline_contractor_summary(fu, as_of)
+    nodl = cd.open_without_deadline(df, df_sg, dl)
+    summ = cd.deadline_contractor_summary(fu, as_of, no_deadline=nodl)
     tot = summ[summ["Contractor"] == "Total"].iloc[0]
 
     st.caption(f"{len(dl)} committed deadlines · statuses from the Dalux export of "
@@ -830,7 +831,7 @@ def render_deadlines():
     k[0].metric("Committed", int(tot["Committed"]))
     k[1].metric("Met on time", int(tot["Met on time"]))
     k[2].metric("Met late", int(tot["Met late"]))
-    k[3].metric("Met, timing unconfirmed", int(tot["Met, timing unconfirmed"]))
+    k[3].metric(cd.DL_UNCONFIRMED, int(tot[cd.DL_UNCONFIRMED]))
     k[4].metric("Missed", int(tot["Missed"]),
                 f"{tot['Missed %']:.1f}% of {int(tot['Deadline passed'])} passed",
                 delta_color="off")
@@ -838,7 +839,9 @@ def render_deadlines():
     st.caption("Each committed deadline sits in one column, so the columns add up "
                "to *Committed*. *Met* includes items finished ahead of a deadline "
                "that is still to come. *Open* = New, Ongoing or Rejected. "
-               "*Missed %* is taken over the deadlines whose day has passed.")
+               "*Missed %* is taken over the deadlines whose day has passed. "
+               "*Open, no committed deadline* is separate from *Committed*: open "
+               "CDEFs that are not in the deadline workbook yet.")
 
     st.markdown("#### By contractor")
     st.dataframe(
@@ -883,7 +886,7 @@ def render_deadlines():
                       "fulfilled_by", "modified_by"])
 
     unconf = sel[sel["result"] == cd.DL_UNCONFIRMED]
-    with st.expander(f"Met, timing unconfirmed ({len(unconf)})"):
+    with st.expander(f"{cd.DL_UNCONFIRMED} ({len(unconf)})"):
         st.caption(
             "Fulfilled, but the only date Dalux gives is after the deadline and "
             "is not the contractor's own action: the approval date for Approved "
@@ -891,6 +894,18 @@ def render_deadlines():
             "reported ready in time, so these are not counted as late.")
         _table(unconf, ["cdef_no", "contractor", "subject", "deadline", "status",
                         "fulfilled_by"])
+
+    nd_sel = nodl[nodl["contractor"].isin(pick)] if pick else nodl
+    with st.expander(f"{cd.OPEN_NO_DEADLINE} ({len(nd_sel)})"):
+        st.caption("Open CDEFs (New, Ongoing, Rejected) in the Dalux export with "
+                   "no deadline in the workbook, newest first. Contractor = "
+                   "Dalux work package. These still need a committed date.")
+        t = nd_sel.rename(columns={"id": "CDEF No.", "contractor": "Contractor",
+                                   "subject": "Subject", "status": "Dalux status",
+                                   "created": "Created", "role": "Role (Dalux)"})
+        st.dataframe(t, hide_index=True, width="stretch",
+                     column_config={"Created": st.column_config.DateColumn(
+                         format="YYYY-MM-DD")})
 
     other = sel[sel["result"].isin([cd.DL_NOT_FOUND, cd.DL_WITHDRAWN])]
     if not other.empty or not review.empty:
@@ -911,7 +926,7 @@ def render_deadlines():
                                                "original": "Deadline text",
                                                "source": "Source"}),
                              hide_index=True, width="stretch")
-    return fu, summ, review, as_of
+    return fu, summ, review, as_of, nodl
 
 
 with _tabs[-1]:
@@ -967,5 +982,5 @@ with st.expander("Definitions & method"):
 - **Total defects** = cumulative count of all defects raised up to and including the end of that window.
 - **Δ vs prev** = change against the previous Fri–Thu week.
 - **CDEF-SG** defects come from the *Construction Defect - SG* Dalux export. They appear on their own dashboard tab and on `SG …` sheets in the Excel report.
-- **Deadlines** tab: each committed deadline in the uploaded deadline workbook is matched to its CDEF by number. *Met* = status Approved, Approved follow-up or Reported ready (Reported ready then Rejected counts as not met). For *Reported ready* items last modified by the contractor, *Date modified* is the report-ready date: on or before the deadline = *Met on time*, after = *Met late*. For *Approved* items the date is the approval date (Date created + Dalux *Resolution time*); the contractor reported ready on or before it, so approval by the deadline = *Met on time*, approval after it = *Met, timing unconfirmed*. The same applies to items whose last change was made by CÉH/EVE. *Missed* = deadline day passed and the CDEF is still New, Ongoing or Rejected. *Missed %* = Missed ÷ Due. Discontinued CDEFs and CDEFs not in the export are listed but not counted.
+- **Deadlines** tab: each committed deadline in the uploaded deadline workbook is matched to its CDEF by number. *Met* = status Approved, Approved follow-up or Reported ready (Reported ready then Rejected counts as not met). For *Reported ready* items last modified by the contractor, *Date modified* is the report-ready date: on or before the deadline = *Met on time*, after = *Met late*. For *Approved* items the date is the approval date (Date created + Dalux *Resolution time*); the contractor reported ready on or before it, so approval by the deadline = *Met on time*, approval after it = *Met, completion date unclear*. *Open, no committed deadline* (outside *Committed*) = open CDEFs in the export with no deadline in the workbook, e.g. defects recorded since it was made. The same applies to items whose last change was made by CÉH/EVE. *Missed* = deadline day passed and the CDEF is still New, Ongoing or Rejected. *Missed %* = Missed ÷ Due. Discontinued CDEFs and CDEFs not in the export are listed but not counted.
 """)

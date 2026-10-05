@@ -343,7 +343,7 @@ _DL_FILL = {
 }
 
 
-def add_deadline_sheets(wb, followup, summary, review, as_of):
+def add_deadline_sheets(wb, followup, summary, review, as_of, no_deadline=None):
     """Two sheets: 'Deadline Summary' (per contractor) and 'Deadline Follow-up'
     (one row per committed CDEF, missed first)."""
     as_of_txt = f"{as_of:%Y-%m-%d}"
@@ -358,9 +358,10 @@ def add_deadline_sheets(wb, followup, summary, review, as_of):
         "they add up to Committed. Met = Approved / Approved, follow-up / Reported "
         "ready, including items done before a future deadline. Missed % = Missed ÷ "
         f"deadlines passed (before {as_of_txt}). "
-        "Met late = reported ready by the contractor after the deadline. Timing "
-        "unconfirmed = approved (or last changed by CÉH/EVE) after the deadline; "
-        "the contractor may have reported ready in time.")
+        "Met late = reported ready by the contractor after the deadline. Completion "
+        "date unclear = approved (or last changed by CÉH/EVE) after the deadline; "
+        "the contractor may have reported ready in time. Open, no committed "
+        "deadline = open CDEFs not in the deadline workbook (not part of Committed).")
     ws.cell(row=2, column=1).font = Font(name=FONT, italic=True, color="595959")
     write_table(ws, summary, start_row=4, pct_cols=("Missed %",),
                 int_cols=tuple(c for c in summary.columns if c not in ("Contractor", "Missed %")))
@@ -422,6 +423,26 @@ def add_deadline_sheets(wb, followup, summary, review, as_of):
         ws.column_dimensions[get_column_letter(j)].width = w
     for i in range(2, len(t) + 2):
         ws.cell(row=i, column=4).alignment = Alignment(horizontal="left", vertical="center")
+    # ---------------- Open, no committed deadline ----------------
+    if no_deadline is not None and not no_deadline.empty:
+        ws = wb.create_sheet("No Deadline (open)")
+        t = no_deadline.copy()
+        if "created" in t.columns:
+            t["created"] = pd.to_datetime(t["created"]).dt.date
+        t = t.rename(columns={"id": "CDEF No.", "contractor": "Contractor",
+                              "subject": "Subject", "status": "Dalux status",
+                              "created": "Created", "role": "Role (Dalux)"}).fillna("")
+        write_table(ws, t, start_row=1, freeze=True)
+        if "Created" in t.columns:
+            ci = list(t.columns).index("Created") + 1
+            for i in range(2, len(t) + 2):
+                v = t.iloc[i - 2]["Created"]
+                if v != "":
+                    ws.cell(row=i, column=ci).value = v
+                    ws.cell(row=i, column=ci).number_format = "yyyy-mm-dd"
+        ws.auto_filter.ref = f"A1:{get_column_letter(len(t.columns))}{len(t) + 1}"
+        for j, w in enumerate([13, 18, 45, 16, 12, 22], start=1):
+            ws.column_dimensions[get_column_letter(j)].width = w
     return wb
 
 

@@ -749,7 +749,7 @@ DL_DUE_SOON = "Due within 7 days"
 DL_NOT_DUE = "Not yet due"
 DL_ON_TIME = "Met on time"
 DL_LATE = "Met late"
-DL_UNCONFIRMED = "Met, timing unconfirmed"
+DL_UNCONFIRMED = "Met, completion date unclear"
 DL_WITHDRAWN = "Discontinued"
 DL_NOT_FOUND = "Not in Dalux export"
 DL_ORDER = [DL_MISSED, DL_DUE_SOON, DL_NOT_DUE, DL_ON_TIME, DL_LATE, DL_UNCONFIRMED,
@@ -952,7 +952,32 @@ def deadline_followup(df, df_sg, deadlines, as_of):
     return m.sort_values(["result", "deadline", "contractor"]).reset_index(drop=True)
 
 
-def deadline_contractor_summary(fu, as_of):
+OPEN_NO_DEADLINE = "Open, no committed deadline"
+
+
+def open_without_deadline(df, df_sg, deadlines):
+    """Open CDEFs (not fulfilled, not discontinued) that have no committed
+    deadline in the deadline workbook - e.g. defects recorded since the
+    workbook was made. Grouped by the Dalux work package."""
+    frames = []
+    for data, is_sg in ((df, False), (df_sg, True)):
+        if data is not None and not data.empty:
+            d = data.copy()
+            d["key"] = d["id"].apply(lambda v: cdef_key(v, sg=is_sg))
+            frames.append(d)
+    if not frames:
+        return pd.DataFrame(columns=["id", "contractor", "subject", "status",
+                                     "created", "role"])
+    d = pd.concat(frames, ignore_index=True).drop_duplicates("key")
+    d = d[~d["status"].isin(FULFILLED_STATUSES | WITHDRAWN_STATUSES)
+          & ~d["key"].isin(set(deadlines["key"]))]
+    cols = [c for c in ["id", "contractor", "subject", "status", "created", "role"]
+            if c in d.columns]
+    return d[cols].sort_values(["contractor", "created"],
+                               ascending=[True, False]).reset_index(drop=True)
+
+
+def deadline_contractor_summary(fu, as_of, no_deadline=None):
     """Per contractor, every committed deadline in exactly one column, so the
     columns add up to 'Committed'. Fulfilled items count as met even when the
     deadline is still ahead. 'Deadline passed' and 'Missed %' cover only the
@@ -967,7 +992,7 @@ def deadline_contractor_summary(fu, as_of):
         "Committed": live.groupby("contractor").size(),
         "Met on time": n(live["result"] == DL_ON_TIME),
         "Met late": n(live["result"] == DL_LATE),
-        "Met, timing unconfirmed": n(live["result"] == DL_UNCONFIRMED),
+        DL_UNCONFIRMED: n(live["result"] == DL_UNCONFIRMED),
         "Missed": n(live["result"] == DL_MISSED),
         "Open, due within 7 days": n(live["result"] == DL_DUE_SOON),
         "Open, due later": n(live["result"] == DL_NOT_DUE),
@@ -975,6 +1000,12 @@ def deadline_contractor_summary(fu, as_of):
     }).fillna(0).astype(int)
     g["Missed %"] = (g["Missed"] / g["Deadline passed"].where(g["Deadline passed"] > 0)
                      * 100).round(1).fillna(0.0)
+    if no_deadline is not None:
+        # Not part of 'Committed': open items still waiting for a commitment.
+        nd = no_deadline.groupby("contractor").size()
+        g = g.reindex(g.index.union(nd.index), fill_value=0)
+        g[OPEN_NO_DEADLINE] = nd.reindex(g.index, fill_value=0)
+        g["Missed %"] = g["Missed %"].fillna(0.0)
     g = g.sort_values(["Missed", "Committed"], ascending=False)
     total = g.drop(columns="Missed %").sum()
     total["Missed %"] = (round(total["Missed"] / total["Deadline passed"] * 100, 1)
