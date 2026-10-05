@@ -1,0 +1,14 @@
+# Dependencies for the scheduled jobs on the Python server.
+#
+# NOTE: streamlit and plotly are NOT needed here — those are only for the
+# interactive dashboard (app.py), which runs on Streamlit Cloud, not on this
+# server.
+
+# Used by contractor_reports.py, cdef_data.py, build_excel.py
+pandas>=2.0
+openpyxl>=3.1
+
+# Used by dalux_scraper.py (browser automation)
+# After installing, the browser itself must also be downloaded once:
+#     playwright install chromium
+playwright>=1.40
