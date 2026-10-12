@@ -116,9 +116,13 @@ with st.sidebar.expander("Top 10 issues tracker", expanded=False):
 
 with st.sidebar.expander("Contractor deadlines", expanded=False):
     st.caption(
-        "Upload the deadline workbook (e.g. *CDEF_Status_Summary.xlsx*, or any "
-        "sheet with a CDEF number and a deadline column) to check the committed "
-        "deadlines against the Dalux status on the **Deadlines** tab.")
+        "Upload the deadline workbook (e.g. *CDEF_Status_Summary.xlsx*, or the contractors' "
+        "deadline file with one sheet per contractor; every sheet with a CDEF number and a "
+        "deadline column is read) to check the committed deadlines against the Dalux status "
+        "on the **Deadlines** tab. Headings may be "
+        "English or Hungarian, e.g. *CDEF No.* / *CDEF szám* and *Deadline* / *Határidő*. "
+        "A *Contractor* / *Kivitelező* column is optional; without it the Dalux work "
+        "package is used.")
     deadline_file = st.file_uploader("Deadline workbook (optional)",
                                      type=["xlsx", "xlsm"], key="deadlinefile")
 

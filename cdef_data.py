@@ -755,9 +755,50 @@ DL_NOT_FOUND = "Not in Dalux export"
 DL_ORDER = [DL_MISSED, DL_DUE_SOON, DL_NOT_DUE, DL_ON_TIME, DL_LATE, DL_UNCONFIRMED,
             DL_WITHDRAWN, DL_NOT_FOUND]
 
-_DL_ID_COLS = ["CDEF No.", "CDEF No", "CDEF", "CDEF number", "No."]
-_DL_DATE_COLS = ["Parsed deadline", "Deadline", "Committed deadline"]
-_DL_CONTR_COLS = ["Contractor", "Worksheet", "Work package"]
+# Accepted column headings, in order of preference. Matching ignores case,
+# extra spaces and a trailing '.' or ':', and also accepts either half of a
+# bilingual heading such as 'Határidő / Deadline'.
+_DL_ID_COLS = ["CDEF No.", "CDEF No", "CDEF number", "CDEF Nr.", "CDEF", "Dalux Snag Number", "Snag number",
+               "No.", "No", "Nr.", "CDEF szám", "CDEF sorszám", "Hibaszám", "Hiba száma", "Sorszám", "Azonosító"]
+_DL_DATE_COLS = ["Parsed deadline", "Committed deadline", "Deadline", "Correction deadline", "Due date",
+                 "Vállalt határidő", "Javítási határidő", "Új határidő", "Határidő"]
+_DL_CONTR_COLS = ["Contractor", "Work package", "Worksheet",
+                  "Kivitelező", "Vállalkozó", "Alvállalkozó", "Munkacsomag"]
+
+
+def _norm_heading(h):
+    import re
+    t = re.sub(r"\s+", " ", str(h or "")).strip().lower()
+    return t.rstrip(".: ").strip()
+
+
+def _find_heading(cells, aliases):
+    """Return the first cell (original text) that matches an alias, trying the
+    aliases in order of preference; None if nothing matches."""
+    parts = []
+    for c in cells:
+        if c is None or (isinstance(c, float) and pd.isna(c)):
+            continue
+        txt = str(c)
+        cand = {_norm_heading(txt)} | {_norm_heading(x) for x in txt.split("/")}
+        parts.append((txt, cand))
+    for alias in aliases:
+        a = _norm_heading(alias)
+        for txt, cand in parts:
+            if a in cand:
+                return txt
+    return None
+
+
+def _to_deadline(v):
+    """Real dates pass through; text dates such as '2026.10.30.', '2026-10-30'
+    or '2026/10/30' are converted; anything else becomes NaT."""
+    import re
+    if isinstance(v, str):
+        m = re.match(r"^\s*(\d{4})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})\.?\s*$", v)
+        if m:
+            v = f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return pd.to_datetime(v, errors="coerce")
 _DL_SHEET_PREFERENCE = ["Source deadlines", "CDEF Follow-up"]
 
 
@@ -780,12 +821,85 @@ def _dl_find_table(xl, sheet):
     """Return (header_row, id_col, date_col) for a deadline table, or None."""
     probe = pd.read_excel(xl, sheet_name=sheet, header=None, nrows=20, dtype=str)
     for i in range(len(probe)):
-        vals = [str(v).strip() for v in probe.iloc[i].tolist()]
-        id_col = next((c for c in _DL_ID_COLS if c in vals), None)
-        date_col = next((c for c in _DL_DATE_COLS if c in vals), None)
-        if id_col and date_col:
+        vals = probe.iloc[i].tolist()
+        id_col = _find_heading(vals, _DL_ID_COLS)
+        date_col = _find_heading(vals, _DL_DATE_COLS)
+        if id_col and date_col and id_col != date_col:
             return i, id_col, date_col
     return None
+
+
+_DL_SKIP_SHEETS = {"data"}          # full Dalux lists kept for reference, not commitments
+
+
+def _load_deadlines_all_sheets(src):
+    """Generic deadline workbook: read every visible sheet that has a CDEF
+    number column and a deadline column, whatever the layout of each sheet.
+    Hidden rows and sheets are skipped, as are sheets called 'Data'.
+    Returns (rows, review) in the same shape as load_deadlines, or None if no
+    sheet has a recognisable table."""
+    import openpyxl
+    if hasattr(src, "seek"):
+        src.seek(0)
+    wb = openpyxl.load_workbook(src, data_only=True)
+    rows, review, found_any = [], [], False
+    for ws in wb.worksheets:
+        if ws.sheet_state != "visible" or ws.title.strip().lower() in _DL_SKIP_SHEETS:
+            continue
+        cells = [list(r) for r in ws.iter_rows(values_only=True)]
+        hdr = None
+        for i, row in enumerate(cells[:20]):
+            idh = _find_heading(row, _DL_ID_COLS)
+            if idh is None:
+                continue
+            dates = [j for j, c in enumerate(row)
+                     if c is not None and _find_heading([c], _DL_DATE_COLS) is not None]
+            if dates:
+                hdr = (i, row.index(idh), dates, _find_heading(row, _DL_CONTR_COLS), row)
+                break
+        if hdr is None:
+            continue
+        found_any = True
+        i, id_j, date_js, contr_h, hrow = hdr
+        contr_j = hrow.index(contr_h) if contr_h is not None else None
+        body = []
+        for k in range(i + 1, len(cells)):
+            excel_row = k + 1
+            if ws.row_dimensions[excel_row].hidden:
+                continue
+            row = cells[k] + [None] * (len(hrow) - len(cells[k]))
+            key = cdef_key(row[id_j]) if row[id_j] is not None else None
+            if key and str(row[id_j]).strip():
+                body.append((excel_row, row, key))
+        if not body:
+            continue
+        # Several 'Deadline' columns (e.g. a header cell repeated): use the one
+        # holding the most dates.
+        date_j = max(date_js, key=lambda j: sum(pd.notna(_to_deadline(r[j])) for _, r, _ in body))
+        for excel_row, row, key in body:
+            raw_dl = row[date_j]
+            d = _to_deadline(raw_dl)
+            contr = str(row[contr_j]).strip() if contr_j is not None and row[contr_j] is not None else ""
+            rec = dict(key=key, cdef_no=str(row[id_j]).strip(), contractor=contr,
+                       source=f"{ws.title}: row {excel_row}")
+            if pd.notna(d):
+                rows.append({**rec, "deadline": pd.Timestamp(d).normalize()})
+            elif raw_dl is not None and str(raw_dl).strip():
+                review.append({**rec, "original": str(raw_dl).strip()})
+    if not found_any:
+        return None
+    rows = pd.DataFrame(rows, columns=["key", "cdef_no", "contractor", "source", "deadline"])
+    review = pd.DataFrame(review, columns=["cdef_no", "contractor", "original", "source"])
+    if not rows.empty:
+        n_dates = rows.groupby("key")["deadline"].transform("nunique")
+        rows = (rows.assign(n_dates=n_dates).sort_values("deadline")
+                .drop_duplicates("key", keep="last"))
+    else:
+        rows["n_dates"] = []
+    deadlines = rows[["key", "cdef_no", "contractor", "deadline", "n_dates", "source"]].reset_index(drop=True)
+    # a CDEF with a date on one sheet and only a text note on another is not 'not checked'
+    review = review[~review["cdef_no"].apply(cdef_key).isin(set(deadlines["key"]))]
+    return deadlines, review.reset_index(drop=True)
 
 
 def load_deadlines(src):
@@ -793,7 +907,8 @@ def load_deadlines(src):
 
     Accepts the full CDEF_Status_Summary workbook (its 'Source deadlines'
     sheet is used; only rows marked 'Dated register' when that column exists)
-    or any simple sheet with a CDEF number column and a deadline column.
+    or any other workbook: then every visible sheet with a CDEF number column
+    and a deadline column is read and combined.
 
     Returns (deadlines, review):
       deadlines - one row per CDEF: key, cdef_no, contractor, deadline, source
@@ -802,6 +917,17 @@ def load_deadlines(src):
     if hasattr(src, "seek"):
         src.seek(0)
     xl = pd.ExcelFile(src)
+    # Anything other than the CDEF_Status_Summary layout: read every sheet.
+    if "Source deadlines" not in xl.sheet_names:
+        res = _load_deadlines_all_sheets(src)
+        if res is None:
+            raise ValueError(
+                "No deadline table found. The workbook needs a sheet with a CDEF number column "
+                "(e.g. 'CDEF No.' or 'CDEF szám') and a deadline column (e.g. 'Deadline' or "
+                "'Határidő'), both headings on the same row within the first 20 rows.")
+        return res
+    if hasattr(src, "seek"):
+        src.seek(0)
     sheets = ([s for s in _DL_SHEET_PREFERENCE if s in xl.sheet_names]
               + [s for s in xl.sheet_names if s not in _DL_SHEET_PREFERENCE])
     found = None
@@ -812,21 +938,22 @@ def load_deadlines(src):
             break
     if not found:
         raise ValueError(
-            "No deadline table found. The workbook needs a sheet with a CDEF "
-            "number column (e.g. 'CDEF No.') and a deadline column "
-            "(e.g. 'Deadline' or 'Parsed deadline').")
+            "No deadline table found. The workbook needs a sheet with a CDEF number column "
+            "(e.g. 'CDEF No.' or 'CDEF szám') and a deadline column (e.g. 'Deadline' or "
+            "'Határidő'), both headings on the same row within the first 20 rows.")
     sheet, hdr_row, id_col, date_col = found
     raw = pd.read_excel(xl, sheet_name=sheet, header=hdr_row)
+    raw.columns = [str(c) for c in raw.columns]
     raw = raw[raw[id_col].notna()].copy()
 
     use_col = "Use in summary" if "Use in summary" in raw.columns else None
-    contr_col = next((c for c in _DL_CONTR_COLS if c in raw.columns), None)
+    contr_col = _find_heading(list(raw.columns), _DL_CONTR_COLS)
     orig_col = "Original deadline" if "Original deadline" in raw.columns else None
 
     raw["key"] = raw[id_col].apply(cdef_key)
-    raw["deadline"] = pd.to_datetime(raw[date_col], errors="coerce").dt.normalize()
+    raw["deadline"] = pd.to_datetime(raw[date_col].apply(_to_deadline), errors="coerce").dt.normalize()
     raw["cdef_no"] = raw[id_col].astype(str).str.strip()
-    raw["contractor"] = (raw[contr_col].astype(str).str.strip()
+    raw["contractor"] = (raw[contr_col].fillna("").astype(str).str.strip()
                          .str.replace(r"\s+scope$", "", regex=True)
                          if contr_col else "")
     raw["original"] = raw[orig_col] if orig_col else raw[date_col]
@@ -915,6 +1042,10 @@ def deadline_followup(df, df_sg, deadlines, as_of):
     dal = dal[[c for c in keep if c in dal.columns]].rename(
         columns={"contractor": "work_package"})
     m = deadlines.merge(dal, on="key", how="left")
+    # No contractor in the deadline file (no column, or an empty cell): use the
+    # Dalux work package instead, so the by-contractor table still splits.
+    given = m["contractor"].fillna("").astype(str).str.strip()
+    m["contractor"] = given.where(given != "", m["work_package"].fillna("")).replace("", "(not given)")
 
     as_of = pd.Timestamp(as_of)
     m["fulfilled_by"] = pd.NaT
